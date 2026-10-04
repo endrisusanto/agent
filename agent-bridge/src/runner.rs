@@ -72,21 +72,13 @@ pub fn execute_suite_run(
     let suite_sub = if is_sts { "STS" } else if is_gts { "GTS" } else { "CTS" };
     let tradefed_binary = if is_sts { "sts-tradefed" } else if is_gts { "gts-tradefed" } else { "cts-tradefed" };
 
-    let suite_dir = auto_root.join(suite_sub);
     let results_dir = auto_root.join("Results");
     let _ = fs::create_dir_all(&results_dir);
 
     let _ = status_tx.send((payload.test_type.clone(), "Running Tradefed".to_string(), 0));
 
-    // Discover executable
-    let candidate_paths = [
-        suite_dir.join("tools").join(tradefed_binary),
-        auto_root.join("tools").join(tradefed_binary),
-        auto_root.join(".gba-bin").join(tradefed_binary),
-        auto_root.join(suite_sub).join("tools").join(tradefed_binary),
-    ];
-
-    let found_exe = candidate_paths.into_iter().find(|p| p.is_file());
+    // Discover executable with deep recursive search in auto_root
+    let found_exe = find_tradefed_binary(auto_root, suite_sub, tradefed_binary);
 
     let exit_code = if let Some(exe_path) = found_exe {
         let _ = log_tx.send(format!("[Bridge] Found Tradefed binary: {}", exe_path.display()));
@@ -97,14 +89,29 @@ pub fn execute_suite_run(
 
         cmd.arg("run");
         if payload.test_type.to_uppercase().contains("SMR") {
-            cmd.arg("cts-smr");
+            if is_gts {
+                cmd.arg("gtsmr");
+            } else if is_sts {
+                cmd.arg("sts-dynamic-plan");
+            } else {
+                cmd.arg("cts-smr");
+            }
         } else if payload.test_type.to_uppercase().contains("SKU") {
             cmd.arg("cts-sku");
         } else if is_sts {
             cmd.arg("sts-dynamic-plan");
+        } else if is_gts {
+            cmd.arg("gts");
         } else {
             cmd.arg("cts");
         }
+
+        // Add selected laundry module filters if present
+        for module in &payload.selected_laundry_results {
+            cmd.arg("-m");
+            cmd.arg(module);
+        }
+
         cmd.arg(&shard_arg);
         for sa in &serial_args {
             cmd.arg(sa);
@@ -182,4 +189,69 @@ pub fn execute_suite_run(
 fn chrono_timestamp() -> String {
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     format!("{}", now.as_secs())
+}
+
+fn find_tradefed_binary(auto_root: &Path, suite_sub: &str, binary_name: &str) -> Option<std::path::PathBuf> {
+    // 1. Direct standard paths
+    let direct_candidates = [
+        auto_root.join(suite_sub).join("tools").join(binary_name),
+        auto_root.join("tools").join(binary_name),
+        auto_root.join(".gba-bin").join(binary_name),
+    ];
+    for p in direct_candidates {
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    // 2. Search inside auto_root/<suite_sub> subdirectories (e.g. CTS/14_r12/android-cts/tools/cts-tradefed)
+    let suite_dir = auto_root.join(suite_sub);
+    if suite_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&suite_dir) {
+            let mut matched_paths = Vec::new();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let sub_cts = path.join(format!("android-{}", suite_sub.to_lowercase())).join("tools").join(binary_name);
+                    if sub_cts.is_file() {
+                        matched_paths.push(sub_cts);
+                        continue;
+                    }
+                    let sub_tools = path.join("tools").join(binary_name);
+                    if sub_tools.is_file() {
+                        matched_paths.push(sub_tools);
+                        continue;
+                    }
+                    // Deep search for STS (e.g. STS/08/14/android-sts/tools/sts-tradefed)
+                    if let Ok(sub_entries) = fs::read_dir(&path) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_p = sub_entry.path();
+                            if sub_p.is_dir() {
+                                let deep_sts = sub_p.join(format!("android-{}", suite_sub.to_lowercase())).join("tools").join(binary_name);
+                                if deep_sts.is_file() {
+                                    matched_paths.push(deep_sts);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(best) = matched_paths.into_iter().next() {
+                return Some(best);
+            }
+        }
+    }
+
+    // 3. Fallback to `which`
+    if let Ok(output) = Command::new("which").arg(binary_name).output() {
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let pb = std::path::PathBuf::from(path_str);
+            if pb.is_file() {
+                return Some(pb);
+            }
+        }
+    }
+
+    None
 }
