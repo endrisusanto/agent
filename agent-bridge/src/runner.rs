@@ -1,11 +1,28 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use crate::scanner::{read_busy_registry, write_busy_registry};
 use crate::types::{BusyDevice, RunSuitePayload};
+
+pub static ACTIVE_RUN_PIDS: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn cancel_suite_run(run_id: &str) -> bool {
+    let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
+    if let Some(pid) = map.remove(run_id) {
+        // Kill the parent tradefed process
+        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).output();
+        // Kill child process tree (adb, java, tradefed child processes)
+        let _ = Command::new("pkill").arg("-9").arg("-P").arg(pid.to_string()).output();
+        true
+    } else {
+        false
+    }
+}
 
 pub struct RunOutcome {
     pub exit_code: i32,
@@ -87,17 +104,45 @@ pub fn execute_suite_run(
         let shard_arg = format!("--shard-count {}", serials.len());
         let serial_args: Vec<String> = serials.iter().flat_map(|s| vec!["-s".to_string(), s.clone()]).collect();
 
+        // Check subplans directory
+        let subplans_dir = exe_path.parent().and_then(|p| p.parent()).map(|p| p.join("subplans"));
+        let has_subplan = |name: &str| -> bool {
+            if let Some(ref sdir) = subplans_dir {
+                sdir.join(format!("{name}.xml")).is_file() || sdir.join(name).is_file()
+            } else {
+                false
+            }
+        };
+
         cmd.arg("run");
         if payload.test_type.to_uppercase().contains("SMR") {
             if is_gts {
-                cmd.arg("gtsmr");
+                if has_subplan("gtsmr") {
+                    cmd.arg("gts").arg("--subplan").arg("gtsmr");
+                } else if has_subplan("gtssmr") {
+                    cmd.arg("gts").arg("--subplan").arg("gtssmr");
+                } else {
+                    cmd.arg("gts");
+                }
             } else if is_sts {
                 cmd.arg("sts-dynamic-plan");
             } else {
-                cmd.arg("cts-smr");
+                if has_subplan("ctssmr") {
+                    cmd.arg("cts").arg("--subplan").arg("ctssmr");
+                } else if has_subplan("cts-smr") {
+                    cmd.arg("cts").arg("--subplan").arg("cts-smr");
+                } else {
+                    cmd.arg("cts");
+                }
             }
         } else if payload.test_type.to_uppercase().contains("SKU") {
-            cmd.arg("cts-sku");
+            if has_subplan("ctssku") {
+                cmd.arg("cts").arg("--subplan").arg("ctssku");
+            } else if has_subplan("cts-sku") {
+                cmd.arg("cts").arg("--subplan").arg("cts-sku");
+            } else {
+                cmd.arg("cts");
+            }
         } else if is_sts {
             cmd.arg("sts-dynamic-plan");
         } else if is_gts {
@@ -134,6 +179,11 @@ pub fn execute_suite_run(
 
         match cmd.spawn() {
             Ok(mut child) => {
+                let pid = child.id();
+                {
+                    let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
+                    map.insert(run_id.clone(), pid);
+                }
                 let log_tx_err = log_tx.clone();
                 if let Some(stderr) = child.stderr.take() {
                     std::thread::spawn(move || {
@@ -149,7 +199,12 @@ pub fn execute_suite_run(
                         let _ = log_tx.send(line);
                     }
                 }
-                child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(1)
+                let code = child.wait().map(|s| s.code().unwrap_or(0)).unwrap_or(1);
+                {
+                    let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
+                    map.remove(&run_id);
+                }
+                code
             }
             Err(e) => {
                 let _ = log_tx.send(format!("[Bridge Error] Failed to launch Tradefed: {e}"));

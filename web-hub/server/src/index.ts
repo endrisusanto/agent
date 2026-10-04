@@ -483,7 +483,21 @@ wssUi.on('connection', (ws) => {
         case 'EXEC_CANCEL_RUN': {
           const { pcId, run_id } = msg;
           if (pcId && sendToBridge(pcId, { type: 'CMD_CANCEL_RUN', run_id })) {
-            console.log(`[Hub] Dispatched CMD_CANCEL_RUN to ${pcId}`);
+            console.log(`[Hub] Dispatched CMD_CANCEL_RUN to ${pcId} for ${run_id}`);
+          }
+          if (run_id) {
+            const job = activeJobs.get(run_id);
+            if (job) {
+              job.status = 'CANCELLED';
+              job.recentLogs.push(`[Hub] Flow run ${run_id} cancelled by user.`);
+              broadcastActiveJobs();
+              setTimeout(() => {
+                activeJobs.delete(run_id);
+                jobHistory.unshift(job);
+                broadcastActiveJobs();
+                broadcastFleetStatus();
+              }, 1200);
+            }
           }
           break;
         }

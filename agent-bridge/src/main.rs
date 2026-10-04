@@ -271,6 +271,17 @@ async fn run_bridge_worker(state: AppState) {
                                                 }
                                             }
 
+                                            "CMD_CANCEL_RUN" => {
+                                                if let Some(run_id) = val.get("run_id").and_then(|s| s.as_str()) {
+                                                    log_msg(&state, &format!("[Bridge] Received CMD_CANCEL_RUN for {run_id}"));
+                                                    let cancelled = runner::cancel_suite_run(run_id);
+                                                    log_msg(&state, &format!("[Bridge] Cancel outcome for {run_id}: {cancelled}"));
+                                                    let mut registry = scanner::read_busy_registry(&auto_root);
+                                                    registry.devices.retain(|_, d| d.run_id != run_id);
+                                                    let _ = scanner::write_busy_registry(&auto_root, &registry);
+                                                }
+                                            }
+
                                             "CMD_RESET_BUSY" => {
                                                 let mut registry = scanner::read_busy_registry(&auto_root);
                                                 registry.devices.clear();
