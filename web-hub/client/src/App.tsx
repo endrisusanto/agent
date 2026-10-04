@@ -41,7 +41,10 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('gba_laundry_workflows');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       } catch (e) {
         console.error('Failed to parse saved workflows:', e);
       }
@@ -49,30 +52,13 @@ export const App: React.FC = () => {
     return [
       {
         id: 'wf-initial',
-        model: 'SM-A055F',
+        model: '',
         selectedModules: [],
         selectedSerials: [],
         pda: '',
       },
     ];
   });
-
-  // Auto-sync workflow model with connected devices if initial is empty
-  useEffect(() => {
-    if (devices.length > 0 && workflows.length === 1 && workflows[0].id === 'wf-initial' && !workflows[0].pda) {
-      const topDevice = devices[0];
-      setWorkflows([
-        {
-          id: 'wf-1',
-          model: topDevice.model || 'SM-A055F',
-          pda: topDevice.pda,
-          selectedModules: [],
-          selectedSerials: [topDevice.serial],
-          pcId: topDevice.pcId,
-        },
-      ]);
-    }
-  }, [devices]);
 
   // Persist workflows
   useEffect(() => {
@@ -98,17 +84,12 @@ export const App: React.FC = () => {
   };
 
   const handleAddWorkflow = () => {
-    // Find next model from devices that doesn't have a workflow yet
-    const existingModels = new Set(workflows.map((w) => w.model.toLowerCase()));
-    const nextDev = devices.find((d) => !existingModels.has(d.model.toLowerCase())) || devices[0];
-
     const newWorkflow: LaundryWorkflowState = {
       id: `wf-${Date.now()}`,
-      model: nextDev ? nextDev.model : 'NEW-MODEL',
-      pda: nextDev?.pda || '',
-      pcId: nextDev?.pcId,
+      model: '',
+      pda: '',
       selectedModules: [],
-      selectedSerials: nextDev ? [nextDev.serial] : [],
+      selectedSerials: [],
     };
     setWorkflows((prev) => [...prev, newWorkflow]);
   };
@@ -220,13 +201,52 @@ export const App: React.FC = () => {
             if (activeWorkflowIdForPicker) {
               const wf = workflows.find((w) => w.id === activeWorkflowIdForPicker);
               if (wf) {
+                // 1. Extract model from XML rows or zip filename
+                let detectedModel = rows.find((r) => r.model)?.model || '';
+                let detectedPda = '';
+
+                if (!detectedModel) {
+                  const filename = zipPath.split('/').pop() || '';
+                  const base = filename.replace(/\.zip$/i, '');
+                  const firstToken = base.split('_')[0] || '';
+                  detectedPda = firstToken;
+
+                  if (firstToken.startsWith('SM-') || firstToken.startsWith('sm-')) {
+                    detectedModel = firstToken.toUpperCase();
+                  } else {
+                    let modelPart = '';
+                    for (const ch of firstToken) {
+                      if (/[a-zA-Z0-9]/.test(ch)) {
+                        modelPart += ch;
+                        if (modelPart.length >= 5 && /[FBGEPNUWfbgepnuw]$/.test(modelPart)) {
+                          break;
+                        }
+                      } else {
+                        break;
+                      }
+                    }
+                    if (modelPart.length >= 4) {
+                      detectedModel = `SM-${modelPart.toUpperCase()}`;
+                    }
+                  }
+                }
+
+                // 2. Find online devices matching this detected model
+                const matchingDevs = devices.filter((d) =>
+                  detectedModel ? d.model.toLowerCase() === detectedModel.toLowerCase() : false
+                );
+
                 const failedModules = rows
                   .filter((r) => r.failed > 0 || r.status.toUpperCase() === 'FAIL')
                   .map((r) => r.testcase || r.suite);
+
                 handleUpdateWorkflow({
                   ...wf,
+                  model: detectedModel || '',
+                  pda: detectedPda || (matchingDevs[0]?.pda ?? ''),
                   selectedZip: zipPath,
                   selectedModules: failedModules.length > 0 ? failedModules : rows.map((r) => r.testcase || r.suite),
+                  selectedSerials: matchingDevs.map((d) => d.serial),
                 });
               }
             }

@@ -46,8 +46,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
   // Filter devices matching this workflow's model
   const matchingDevices = useMemo(() => {
+    if (!workflow.model) return [];
     return allDevices.filter((d) => {
-      if (!workflow.model) return true;
       return d.model.toLowerCase() === workflow.model.toLowerCase();
     });
   }, [allDevices, workflow.model]);
@@ -133,8 +133,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
   };
 
-  const modelName = workflow.model || (matchingDevices[0]?.model ?? 'ALL MODELS');
-  const pdaInfo = workflow.pda || matchingDevices[0]?.pda || 'PDA: Auto Detect';
+  const modelName = workflow.model;
+  const pdaInfo = workflow.pda || (matchingDevices[0]?.pda ? matchingDevices[0].pda : '');
   const hasUserdebug = matchingDevices.some((d) => d.is_userdebug);
 
   return (
@@ -150,28 +150,40 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
             {isExpanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
           </button>
           <div className="accordion-model-info">
-            <span className="accordion-model-name">{modelName}</span>
-            <span className={`badge badge-xs ${hasUserdebug ? 'badge-userdebug' : 'badge-user'}`}>
-              {hasUserdebug ? 'USERDEBUG' : 'USER'}
-            </span>
-            <span className="accordion-pda-text">({pdaInfo})</span>
+            {modelName ? (
+              <>
+                <span className="accordion-model-name">{modelName}</span>
+                <span className={`badge badge-xs ${hasUserdebug ? 'badge-userdebug' : 'badge-user'}`}>
+                  {hasUserdebug ? 'USERDEBUG' : 'USER'}
+                </span>
+                {pdaInfo && <span className="accordion-pda-text">({pdaInfo})</span>}
+              </>
+            ) : (
+              <span className="accordion-model-name" style={{ color: 'var(--text-secondary)' }}>
+                LAUNDRY WORKFLOW (Pilih Zip Hasil Test)
+              </span>
+            )}
           </div>
         </div>
 
         <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
-          <button
-            className="btn btn-suite-primary"
-            title="Jalankan Cuci SMR untuk modul terpilih"
-            onClick={handleRunLaundryAutomation}
-            disabled={workflow.selectedSerials.length === 0}
-          >
-            <PlayIcon size={13} />
-            <span>Jalankan Automasi</span>
-          </button>
+          {modelName && (
+            <>
+              <button
+                className="btn btn-suite-primary"
+                title="Jalankan Cuci SMR untuk modul terpilih"
+                onClick={handleRunLaundryAutomation}
+                disabled={workflow.selectedSerials.length === 0}
+              >
+                <PlayIcon size={13} />
+                <span>Jalankan Automasi</span>
+              </button>
 
-          <span className="badge badge-unit badge-xs">
-            {workflow.selectedSerials.length}/{matchingDevices.length} Unit
-          </span>
+              <span className="badge badge-unit badge-xs">
+                {workflow.selectedSerials.length}/{matchingDevices.length} Unit
+              </span>
+            </>
+          )}
 
           <button
             className="btn-icon-danger"
@@ -436,6 +448,10 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                         })}
                       </tbody>
                     </table>
+                  </div>
+                ) : !modelName ? (
+                  <div className="empty-state-compact">
+                    Pilih file Zip hasil test di atas terlebih dahulu untuk mendeteksi model dan menghubungkan perangkat.
                   </div>
                 ) : (
                   <div className="empty-state-compact">
