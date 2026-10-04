@@ -116,13 +116,21 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
         if entry.file_name() == "test_result.xml" {
             let xml_path = entry.path();
             if let Ok(content) = std::fs::read_to_string(xml_path) {
-                let suite = if xml_path.to_string_lossy().contains("gts") {
-                    "GTS".to_string()
-                } else if xml_path.to_string_lossy().contains("sts") {
-                    "STS".to_string()
-                } else {
-                    "CTS".to_string()
-                };
+                let parsed_suite_name = parse_xml_string_attr(&content, "suite_name").unwrap_or_default();
+                let suite = classify_suite(&parsed_suite_name)
+                    .or_else(|| {
+                        let path_str = xml_path.to_string_lossy().to_lowercase();
+                        if path_str.contains("gts") {
+                            Some("GTS".to_string())
+                        } else if path_str.contains("sts") {
+                            Some("STS".to_string())
+                        } else if path_str.contains("cts") {
+                            Some("CTS".to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| "CTS".to_string());
 
                 let parsed_model = parse_xml_string_attr(&content, "build_model")
                     .or_else(|| parse_xml_string_attr(&content, "build_device"))
@@ -144,31 +152,96 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     .or_else(|| parse_xml_string_attr(&content, "build_id"))
                     .unwrap_or_default();
 
+                let suite_version = parse_xml_string_attr(&content, "suite_version")
+                    .or_else(|| parse_xml_string_attr(&content, "suite_build_number"))
+                    .unwrap_or_else(|| {
+                        if suite == "GTS" {
+                            "14_r2".to_string()
+                        } else if suite == "STS" {
+                            "15_sts-r52".to_string()
+                        } else {
+                            "15_r9".to_string()
+                        }
+                    });
+
+                let cmd_args = parse_xml_string_attr(&content, "command_line_args").unwrap_or_default();
+                let suite_plan = parse_xml_string_attr(&content, "suite_plan")
+                    .or_else(|| parse_xml_string_attr(&content, "plan"))
+                    .unwrap_or_default();
+
                 let detected_plan = detect_laundry_plan_kind(&content, xml_path, original_zip_path);
 
-                let total = parse_xml_attr(&content, "modules_total").unwrap_or(0);
-                let passed = parse_xml_attr(&content, "modules_done").unwrap_or(0);
-                let failed = parse_xml_attr(&content, "modules_not_done").unwrap_or(0);
+                let start_ms = parse_xml_attr(&content, "start");
+                let end_ms = parse_xml_attr(&content, "end");
+                let time_str = format_xml_duration(start_ms, end_ms);
 
-                let testcase_name = xml_path
+                let summary_pass = parse_xml_attr(&content, "pass");
+                let summary_fail = parse_xml_attr(&content, "failed");
+                let mod_total = parse_xml_attr(&content, "modules_total").unwrap_or(0);
+                let mod_done = parse_xml_attr(&content, "modules_done").unwrap_or(0);
+
+                let passed = summary_pass.unwrap_or(mod_done);
+                let failed = summary_fail.unwrap_or(0);
+                let total = if passed + failed > 0 {
+                    passed + failed
+                } else {
+                    mod_total
+                };
+
+                let raw_dir_name = xml_path
                     .parent()
                     .and_then(|p| p.file_name())
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
 
+                let testcase_title = format!("{suite} {raw_dir_name}");
+
+                let subtestcases_str = if !cmd_args.trim().is_empty() && cmd_args.trim() != "-" {
+                    cmd_args.trim().to_string()
+                } else if !suite_plan.trim().is_empty() && suite_plan.trim() != "-" {
+                    format!("{} --subplan {}", suite.to_lowercase(), suite_plan.trim())
+                } else {
+                    let r_low = raw_dir_name.to_lowercase();
+                    if suite == "GTS" {
+                        if r_low.contains("variant") || r_low.contains("sku") {
+                            "gts --subplan gts-variant".to_string()
+                        } else if r_low.contains("smr") {
+                            "gts-smr".to_string()
+                        } else {
+                            "gts --subplan Normalised".to_string()
+                        }
+                    } else if suite == "CTS" {
+                        "cts --subplan smr".to_string()
+                    } else if suite == "STS" {
+                        "sts-dynamic-incremental".to_string()
+                    } else {
+                        format!("{} retry", suite.to_lowercase())
+                    }
+                };
+
+                let devices_str = parse_xml_string_attr(&content, "devices")
+                    .or_else(|| parse_xml_string_attr(&content, "device_serial"))
+                    .unwrap_or_default();
+
+                let result_dir_display = if !devices_str.is_empty() {
+                    format!("{devices_str} · report-log-files/")
+                } else {
+                    "report-log-files/".to_string()
+                };
+
                 results.push(LaundryResultInfo {
-                    id: format!("{}_{}", suite, testcase_name),
+                    id: format!("{}_{}", suite, raw_dir_name),
                     suite,
-                    testcase: testcase_name,
-                    subtestcases: format!("{passed}/{total} Modul Done"),
-                    status: if failed > 0 { "fail".to_string() } else { "pass".to_string() },
-                    time: "00:00:00".to_string(),
+                    testcase: testcase_title,
+                    subtestcases: subtestcases_str,
+                    status: "Test Done".to_string(),
+                    time: time_str,
                     total,
                     passed,
                     failed,
-                    suite_version: "14_r2".to_string(),
-                    result_dir: xml_path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+                    suite_version,
+                    result_dir: result_dir_display,
                     model: formatted_model,
                     ap_version: parsed_ap,
                     plan: detected_plan,
@@ -178,6 +251,34 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
     }
 
     Ok(results)
+}
+
+fn classify_suite(name: &str) -> Option<String> {
+    let lower = name.to_lowercase();
+    if lower.contains("verifier") || lower.contains("ctsv") {
+        None
+    } else if lower.contains("cts") || lower.contains("compatibility") {
+        Some("CTS".to_string())
+    } else if lower.contains("gts") || lower.contains("google") {
+        Some("GTS".to_string())
+    } else if lower.contains("sts") || lower.contains("security") {
+        Some("STS".to_string())
+    } else {
+        None
+    }
+}
+
+fn format_xml_duration(start_ms: Option<u64>, end_ms: Option<u64>) -> String {
+    match (start_ms, end_ms) {
+        (Some(start), Some(end)) if end >= start => {
+            let total = (end - start) / 1000;
+            let h = total / 3600;
+            let m = (total % 3600) / 60;
+            let s = total % 60;
+            format!("{h:02}:{m:02}:{s:02}")
+        }
+        _ => "00:00:00".to_string(),
+    }
 }
 
 fn detect_laundry_plan_kind(content: &str, _xml_path: &Path, original_zip_path: &Path) -> String {
