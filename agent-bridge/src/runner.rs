@@ -107,10 +107,18 @@ pub fn execute_suite_run(
 
     let _ = log_tx.send(format!("[AI Worker] Result directory: {}", session_dir.display()));
 
-    let model = payload.target_model.clone().unwrap_or_else(|| "UnknownModel".to_string());
-    let pda = "PDA".to_string();
+    let first_serial = serials.first().cloned().unwrap_or_default();
+    let first_props = device_props(&first_serial).unwrap_or_default();
+    let model = payload.target_model.clone()
+        .or_else(|| first_props.get("ro.product.model").cloned())
+        .unwrap_or_else(|| "UnknownModel".to_string());
+    let pda = first_props.get("ro.build.PDA")
+        .or_else(|| first_props.get("ro.boot.em.pda"))
+        .or_else(|| first_props.get("ro.build.display.id"))
+        .cloned()
+        .unwrap_or_else(|| "PDA".to_string());
 
-    let mut collected_zips = Arc::new(Mutex::new(Vec::<String>::new()));
+    let collected_zips = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let exit_code = match payload.test_type.as_str() {
         "Laundry" | "Laundry Normal" | "Laundry SKU" | "Laundry SMR" => {
