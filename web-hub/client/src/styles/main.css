@@ -902,6 +902,58 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+/* Standalone Toggle Switch (Toggle Pill) */
+.switch-toggle {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.switch-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #21262d;
+  border: 1px solid #30363d;
+  transition: all 0.2s ease;
+  border-radius: 18px;
+}
+
+.switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 12px;
+  width: 12px;
+  left: 2px;
+  bottom: 2px;
+  background-color: #8b949e;
+  transition: all 0.2s ease;
+  border-radius: 50%;
+}
+
+.switch-toggle input:checked + .switch-slider {
+  background-color: #1f6feb;
+  border-color: #1f6feb;
+}
+
+.switch-toggle input:checked + .switch-slider:before {
+  transform: translateX(14px);
+  background-color: #ffffff;
+}
+
 .notice-banner {
   padding: 0.5rem 0.875rem;
   background-color: rgba(210, 153, 34, 0.12);

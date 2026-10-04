@@ -289,24 +289,24 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                     </div>
 
                     {analysisRows.length > 0 ? (
-                      <div className="table-responsive" style={{ maxHeight: '240px' }}>
+                      <div className="table-responsive" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                         <table className="data-table">
                           <thead>
                             <tr>
-                              <th style={{ width: '40px' }}>Pilih</th>
-                              <th>Modul / Test Suite</th>
-                              <th>Status</th>
-                              <th>Passed</th>
-                              <th>Failed</th>
-                              <th>Total</th>
-                              <th>Durasi</th>
+                              <th style={{ width: '56px', textAlign: 'center' }}>SELECT</th>
+                              <th style={{ minWidth: '220px' }}>TESTCASE</th>
+                              <th style={{ minWidth: '260px' }}>SUBTESTCASES</th>
+                              <th style={{ width: '100px', textAlign: 'center' }}>STATUS</th>
+                              <th style={{ width: '90px', textAlign: 'center' }}>TIME</th>
+                              <th style={{ minWidth: '150px' }}>RESULTS</th>
                             </tr>
                           </thead>
                           <tbody>
                             {analysisRows.map((row) => {
                               const moduleName = row.testcase || row.suite;
                               const isChecked = workflow.selectedModules.includes(moduleName);
-                              const isFail = row.failed > 0 || row.status.toUpperCase() === 'FAIL';
+                              const isFail = (row.failed || 0) > 0 || row.status?.toUpperCase() === 'FAIL';
+                              const subInfo = [row.suite_version, row.model, row.result_dir].filter(Boolean).join(' · ');
                               return (
                                 <tr
                                   key={row.id || moduleName}
@@ -314,33 +314,69 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                   onClick={() => handleToggleModule(moduleName)}
                                   style={{ cursor: 'pointer' }}
                                 >
-                                  <td onClick={(e) => e.stopPropagation()}>
-                                    <input
-                                      type="checkbox"
-                                      className="checkbox-custom"
-                                      checked={isChecked}
-                                      onChange={() => handleToggleModule(moduleName)}
-                                    />
+                                  <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                                    <label className="switch-toggle" style={{ margin: '0 auto' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => handleToggleModule(moduleName)}
+                                      />
+                                      <span className="switch-slider"></span>
+                                    </label>
                                   </td>
                                   <td>
-                                    <strong className="mono">{moduleName}</strong>
-                                    {row.subtestcases && (
-                                      <div className="text-secondary text-xs">{row.subtestcases}</div>
+                                    <div className="mono font-semibold" style={{ fontSize: '0.8125rem' }}>
+                                      {moduleName}
+                                    </div>
+                                    {subInfo && (
+                                      <div className="text-secondary text-xs" style={{ marginTop: '0.125rem', opacity: 0.75 }}>
+                                        {subInfo}
+                                      </div>
                                     )}
                                   </td>
                                   <td>
-                                    <span
-                                      className={`badge badge-xs ${isFail ? 'badge-busy' : 'badge-ready'}`}
+                                    <div
+                                      className="mono text-xs text-secondary"
+                                      style={{
+                                        maxWidth: '380px',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                      title={row.subtestcases || '-'}
                                     >
-                                      {row.status || (isFail ? 'FAIL' : 'PASS')}
+                                      {row.subtestcases || '-'}
+                                    </div>
+                                  </td>
+                                  <td style={{ textAlign: 'center' }}>
+                                    <span
+                                      className={`badge badge-xs ${isFail ? 'badge-fail' : 'badge-ready'}`}
+                                      style={{ fontWeight: 600 }}
+                                    >
+                                      {row.status || 'Test Done'}
                                     </span>
                                   </td>
-                                  <td className="mono">{row.passed}</td>
-                                  <td className={`mono ${isFail ? 'text-danger' : ''}`}>
-                                    {row.failed}
+                                  <td className="mono text-xs text-secondary" style={{ textAlign: 'center' }}>
+                                    {row.time || '00:00:00'}
                                   </td>
-                                  <td className="mono">{row.total}</td>
-                                  <td className="mono text-secondary">{row.time || '-'}</td>
+                                  <td>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                      <div className="text-xs text-secondary" style={{ fontSize: '0.7rem' }}>
+                                        Total {row.total ?? 0}
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
+                                        <span className="badge badge-ready badge-xs" style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}>
+                                          Pass {row.passed ?? 0}
+                                        </span>
+                                        <span
+                                          className={`badge ${(row.failed || 0) > 0 ? 'badge-fail' : 'badge-busy'} badge-xs`}
+                                          style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}
+                                        >
+                                          Fail {row.failed ?? 0}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </td>
                                 </tr>
                               );
                             })}

@@ -304,59 +304,92 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                   </div>
 
                   {/* Modules Data Table */}
-                  <div className="table-responsive" style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                  <div className="table-responsive" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th style={{ width: '40px' }}>Select</th>
-                          <th>Suite</th>
-                          <th>Plan</th>
-                          <th>AP Version</th>
-                          <th>Testcase / Module</th>
-                          <th>Total</th>
-                          <th>Passed</th>
-                          <th>Failed</th>
-                          <th>Status</th>
+                          <th style={{ width: '56px', textAlign: 'center' }}>SELECT</th>
+                          <th style={{ minWidth: '220px' }}>TESTCASE</th>
+                          <th style={{ minWidth: '260px' }}>SUBTESTCASES</th>
+                          <th style={{ width: '100px', textAlign: 'center' }}>STATUS</th>
+                          <th style={{ width: '90px', textAlign: 'center' }}>TIME</th>
+                          <th style={{ minWidth: '150px' }}>RESULTS</th>
                         </tr>
                       </thead>
                       <tbody>
                         {laundryAnalysis.rows.map((r) => {
                           const isChecked = selectedRowIds.includes(r.id);
+                          const isFail = (r.failed || 0) > 0 || r.status?.toUpperCase() === 'FAIL';
+                          const subInfo = [r.suite_version, r.model, r.result_dir].filter(Boolean).join(' · ');
                           return (
-                            <tr key={r.id}>
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => handleToggleRow(r.id)}
-                                />
+                            <tr
+                              key={r.id}
+                              className={isChecked ? 'row-selected' : ''}
+                              onClick={() => handleToggleRow(r.id)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                                <label className="switch-toggle" style={{ margin: '0 auto' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => handleToggleRow(r.id)}
+                                  />
+                                  <span className="switch-slider"></span>
+                                </label>
                               </td>
-                              <td><span className="badge badge-pc">{r.suite}</span></td>
                               <td>
-                                <span
-                                  className={`badge ${
-                                    r.plan === 'SMR'
-                                      ? 'badge-unit'
-                                      : r.plan === 'SKU'
-                                      ? 'badge-running'
-                                      : 'badge-pc'
-                                  }`}
-                                  style={{ fontSize: '0.6875rem' }}
+                                <div className="mono font-semibold" style={{ fontSize: '0.8125rem' }}>
+                                  {r.testcase || r.suite}
+                                </div>
+                                {subInfo && (
+                                  <div className="text-secondary text-xs" style={{ marginTop: '0.125rem', opacity: 0.75 }}>
+                                    {subInfo}
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                <div
+                                  className="mono text-xs text-secondary"
+                                  style={{
+                                    maxWidth: '380px',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  title={r.subtestcases || '-'}
                                 >
-                                  {r.plan || 'Normal'}
+                                  {r.subtestcases || '-'}
+                                </div>
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <span
+                                  className={`badge badge-xs ${isFail ? 'badge-fail' : 'badge-ready'}`}
+                                  style={{ fontWeight: 600 }}
+                                >
+                                  {r.status || 'Test Done'}
                                 </span>
                               </td>
-                              <td className="mono-cell" style={{ fontSize: '0.75rem' }}>
-                                {r.ap_version || '-'}
+                              <td className="mono text-xs text-secondary" style={{ textAlign: 'center' }}>
+                                {r.time || '00:00:00'}
                               </td>
-                              <td className="mono-cell" style={{ fontSize: '0.75rem' }}>{r.testcase}</td>
-                              <td>{r.total}</td>
-                              <td style={{ color: 'var(--status-ready-text)' }}>{r.passed}</td>
-                              <td style={{ color: r.failed > 0 ? 'var(--status-fail-text)' : 'inherit' }}>{r.failed}</td>
                               <td>
-                                <span className={`badge ${r.failed > 0 ? 'badge-fail' : 'badge-pass'}`}>
-                                  {r.status}
-                                </span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                  <div className="text-xs text-secondary" style={{ fontSize: '0.7rem' }}>
+                                    Total {r.total ?? 0}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
+                                    <span className="badge badge-ready badge-xs" style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}>
+                                      Pass {r.passed ?? 0}
+                                    </span>
+                                    <span
+                                      className={`badge ${(r.failed || 0) > 0 ? 'badge-fail' : 'badge-busy'} badge-xs`}
+                                      style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}
+                                    >
+                                      Fail {r.failed ?? 0}
+                                    </span>
+                                  </div>
+                                </div>
                               </td>
                             </tr>
                           );
