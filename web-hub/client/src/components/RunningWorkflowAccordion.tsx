@@ -27,7 +27,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
 
   // Filter visible tabs
   const visibleJobs = useMemo(() => {
-    return activeJobs.filter((job) => !closedTabIds.includes(job.run_id));
+    return (activeJobs || []).filter((job) => !closedTabIds.includes(job.run_id));
   }, [activeJobs, closedTabIds]);
 
   // Sync selected tab if previous one disappeared or on initial load
@@ -42,15 +42,13 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
     }
   }, [visibleJobs, selectedTabId]);
 
-  if (activeJobs.length === 0) return null;
-
-  const currentJob = activeJobs.find((j) => j.run_id === selectedTabId);
+  const currentJob = (activeJobs || []).find((j) => j.run_id === selectedTabId);
 
   // Extract raw log lines for current view
   const rawLogs: string[] = useMemo(() => {
     if (selectedTabId === 'running-all') {
       const all: string[] = [];
-      activeJobs.forEach((j) => {
+      (activeJobs || []).forEach((j) => {
         const offset = clearedRunLogs[j.run_id] || 0;
         const slice = (j.recentLogs || []).slice(offset);
         all.push(...slice);
@@ -71,18 +69,20 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
 
     const knownTags = ['AI Worker', 'CTS', 'GTS', 'STS', 'prepare', 'roxml', 'runner', 'Bridge'];
     knownTags.forEach((t) => {
-      if (rawLogs.some((l) => l.toLowerCase().includes(`[${t.toLowerCase()}]`))) {
+      if (rawLogs.some((l) => typeof l === 'string' && l.toLowerCase().includes(`[${t.toLowerCase()}]`))) {
         tags.add(t);
       }
     });
 
     // Also look for dynamic bracketed tags like [TAG]
     rawLogs.forEach((line) => {
-      const match = line.match(/\[([A-Za-z0-9_-]{2,15})\]/);
-      if (match && match[1]) {
-        const tagName = match[1];
-        if (!['time', 'date', 'log', 'stdout', 'stderr'].includes(tagName.toLowerCase())) {
-          tags.add(tagName);
+      if (typeof line === 'string') {
+        const match = line.match(/\[([A-Za-z0-9_-]{2,15})\]/);
+        if (match && match[1]) {
+          const tagName = match[1];
+          if (!['time', 'date', 'log', 'stdout', 'stderr'].includes(tagName.toLowerCase())) {
+            tags.add(tagName);
+          }
         }
       }
     });
@@ -94,7 +94,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
   const filteredLogs = useMemo(() => {
     if (activeSubtab === 'ALL') return rawLogs;
     const pattern = `[${activeSubtab.toLowerCase()}]`;
-    return rawLogs.filter((l) => l.toLowerCase().includes(pattern));
+    return rawLogs.filter((l) => typeof l === 'string' && l.toLowerCase().includes(pattern));
   }, [rawLogs, activeSubtab]);
 
   // Auto-scroll to bottom of logBox
@@ -107,7 +107,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
   const handleClearLog = () => {
     if (selectedTabId === 'running-all') {
       const nextClear: Record<string, number> = {};
-      activeJobs.forEach((j) => {
+      (activeJobs || []).forEach((j) => {
         nextClear[j.run_id] = j.recentLogs?.length || 0;
       });
       setClearedRunLogs(nextClear);
@@ -128,6 +128,11 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
     }
   };
 
+  // UNCONDITIONAL HOOKS FINISHED: Check condition only when rendering JSX
+  if (!activeJobs || activeJobs.length === 0) {
+    return null;
+  }
+
   return (
     <section className="running-log-card">
       {/* Header */}
@@ -144,7 +149,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
           {currentJob && (
             <>
               <span className="mono-cell" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                ⏱ {formatDuration(currentJob.elapsed_secs)}
+                ⏱ {formatDuration(currentJob.elapsed_secs || 0)}
               </span>
               <button
                 className="btn btn-danger btn-xs"
