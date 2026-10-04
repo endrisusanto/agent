@@ -116,7 +116,7 @@ export const TestRunnerModal: React.FC<TestRunnerModalProps> = ({
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div className="grid-form-2col">
             <div className="form-group">
               <label className="form-label">Retry Count</label>
               <input
@@ -152,7 +152,7 @@ export const TestRunnerModal: React.FC<TestRunnerModalProps> = ({
           </div>
 
           {wifiEnabled && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div className="grid-form-2col">
               <div className="form-group">
                 <label className="form-label">SSID</label>
                 <input

@@ -63,7 +63,7 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
           <span className="badge badge-ready">{devices.length} Total</span>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <div className="panel-controls">
           <input
             type="text"
             className="form-input"
@@ -73,12 +73,12 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
             style={{ width: '220px' }}
           />
 
-          <div style={{ display: 'flex', gap: '0.375rem' }}>
+          <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
             {(['all', 'user', 'userdebug', 'busy'] as const).map((type) => (
               <button
                 key={type}
                 className={`btn ${filterType === type ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '0.375rem 0.625rem', fontSize: '0.75rem' }}
+                style={{ padding: '0.375rem 0.625rem', fontSize: '0.75rem', minHeight: '34px' }}
                 onClick={() => setFilterType(type)}
               >
                 {type.toUpperCase()}
