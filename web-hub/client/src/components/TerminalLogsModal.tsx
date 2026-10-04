@@ -57,7 +57,7 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
   if (!isOpen) return null;
 
   const handleCopyLogs = () => {
-    if (activeJob?.recentLogs) {
+    if (Array.isArray(activeJob?.recentLogs) && activeJob.recentLogs.length > 0) {
       navigator.clipboard.writeText(activeJob.recentLogs.join('\n'));
       alert('Logs disalin ke clipboard.');
     }
@@ -156,7 +156,7 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
             }}
           >
             <div>
-              <strong>Node PC:</strong> <span className="mono">{activeJob.pcId}</span> • <strong>Suite:</strong> {activeJob.test_type} ({activeJob.suite}) • <strong>Devices:</strong> <span className="mono">{activeJob.devices.join(', ') || 'Auto'}</span>
+              <strong>Node PC:</strong> <span className="mono">{activeJob.pcId}</span> • <strong>Suite:</strong> {activeJob.test_type} ({activeJob.suite}) • <strong>Devices:</strong> <span className="mono">{Array.isArray(activeJob.devices) ? activeJob.devices.join(', ') : (activeJob.devices || 'Auto')}</span>
             </div>
             {activeJob.summary && (
               <div style={{ display: 'flex', gap: '0.5rem' }}>

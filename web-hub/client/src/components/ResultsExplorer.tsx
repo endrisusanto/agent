@@ -48,7 +48,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({ history }) => 
                   </td>
                   <td>{job.suite}</td>
                   <td className="mono-cell" style={{ fontSize: '0.75rem' }}>
-                    {job.devices.join(', ')}
+                    {Array.isArray(job.devices) ? job.devices.join(', ') : (job.devices || 'N/A')}
                   </td>
                   <td>{summary?.run_time || `${job.elapsed_secs}s`}</td>
                   <td style={{ color: 'var(--status-ready-text)', fontWeight: 600 }}>

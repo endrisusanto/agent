@@ -168,7 +168,8 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
               <div className="log-flow-tabs">
                 {visibleJobs.map((job) => {
                   const isActive = selectedTabId === job.run_id;
-                  const flowLabel = `${job.test_type} | ${job.suite || 'Auto'} [${job.devices.join(', ')}]`;
+                  const devText = Array.isArray(job.devices) ? job.devices.join(', ') : (job.devices || 'Auto');
+                  const flowLabel = `${job.test_type || 'Suite'} | ${job.suite || 'Auto'} [${devText}]`;
                   return (
                     <div
                       key={job.run_id}
