@@ -6,79 +6,108 @@ Distributed Android Test Suite Automation (CTS, GTS, STS, SKU, MR, SMR, and Cuci
 
 ## Overview
 
-Sistem otomasi pengujian Android terdistribusi dengan arsitektur dua komponen utama:
-1. **`agent-bridge`**: Daemon ringan berbasis Rust/Tauri dengan AppTray (System Tray) yang terinstall pada masing-masing Node PC/Workstation. Bridge memindai perangkat ADB lokal, mengeksekusi test suite Tradefed, dan men-stream log secara real-time.
-2. **`web-hub`**: Central Web Hub (`agent.endrisusanto.my.id`) berbasis Node.js/TypeScript WebSocket server dan dashboard modern React/Vite yang mengkoordinasikan armada pengujian dan pemantauan secara real-time.
+GBA Agentic Auto Fleet coordinates large-scale Android compliance and certification test suites across multiple workstation PCs running native agent daemons. Operators manage connected devices, trigger automated test runs, monitor live execution logs, and inspect test results from a central web dashboard.
 
 ---
 
-## Struktur Repositori
+## Architecture
 
 ```
-Agent/
+                                  ┌───────────────────────────────┐
+                                  │      Central Web Hub          │
+                                  │  (agent.endrisusanto.my.id)   │
+                                  │  - Node.js + WebSocket Server │
+                                  │  - React + Vite Dashboard     │
+                                  └───────────────▲───────────────┘
+                                                  │
+                                WebSocket (/ws/bridge & /ws/ui)
+                                                  │
+                 ┌────────────────────────────────┴────────────────────────────────┐
+                 │                                                                 │
+  ┌──────────────▼──────────────┐                                   ┌──────────────▼──────────────┐
+  │   Node Workstation 01       │                                   │   Node Workstation 02       │
+  │   - gba-agent-bridge (Tray) │                                   │   - gba-agent-bridge (Tray) │
+  │   - Tradefed Runner Engine  │                                   │   - Tradefed Runner Engine  │
+  │   - Local Results/ & ADB    │                                   │   - Local Results/ & ADB    │
+  └──────────────┬──────────────┘                                   └──────────────┬──────────────┘
+                 │                                                                 │
+        ┌────────┴────────┐                                               ┌────────┴────────┐
+        ▼                 ▼                                               ▼                 ▼
+  [Galaxy S24]      [Galaxy A55]                                    [Galaxy S23]      [Galaxy Z Fold]
+```
+
+---
+
+## Repository Structure
+
+```
+agent/
 ├── web-hub/
 │   ├── client/          # React, Vite, and TypeScript frontend dashboard
-│   └── server/          # Node.js backend & WebSocket Hub server
+│   └── server/          # Node.js backend and WebSocket hub server
 ├── agent-bridge/        # Native Rust/Tauri client daemon with AppTray
-├── build-deb.sh         # Skrip build paket .deb untuk Node PC Linux
-└── package.json         # Workspace scripts
+├── build-deb.sh         # Linux .deb native packager script
+├── release.sh           # Automated versioning, tagging, and release script
+└── package.json         # Monorepo workspace configuration
 ```
 
 ---
 
-## Menjalankan Web Hub Server & Dashboard
+## Core Capabilities
 
-### 1. Install Dependensi Workspace
+### Central Web Hub (`agent.endrisusanto.my.id`)
+- **Fleet State Aggregator**: Real-time tracking of connected bridge nodes, active running jobs, and connected Android devices across all benches.
+- **Suite Orchestration**: Triggers `CTS`, `GTS`, `STS`, `SKU`, `MR`, `SMR`, and `Cuci SMR` with custom retry counts, timeouts, and Wi-Fi provisioning.
+- **Cuci SMR (Laundry / Scat Retry)**: Scans result zip archives on target node disks, parses `test_result.xml` subtests, and allows operators to selectively retry failed modules.
+- **Live Log Streaming**: Real-time console log drawer per job and device with auto-scroll and cancel actions.
+- **Design System**: High-contrast dark and light modes with typography powered by `Plus Jakarta Sans` and `JetBrains Mono`.
+
+### Native Agent Bridge (`agent-bridge`)
+- **AppTray Background Daemon**: Runs in the system tray with close-to-tray protection to prevent accidental cancellation during long test runs.
+- **Hardware & Build Detection**: Continuously monitors connected ADB devices, extracting Android version, SPL, PDA, CSC, and `USER` vs `USERDEBUG` build types.
+- **Zero Network Waste**: Executes Tradefed suites locally; only metadata and log streams are transmitted to the Hub.
+
+---
+
+## Quick Start
+
+### 1. Web Hub Development
 ```bash
+# Install workspace dependencies
 npm install
-```
 
-### 2. Jalankan Development Mode
-```bash
-# Menjalankan server backend (:4000) dan client frontend (:3000) sekaligus
+# Start both backend server (:4000) and frontend client (:3000)
 npm run dev
 ```
 
-- **Dashboard UI**: `http://localhost:3000` (atau domain produksi `https://agent.endrisusanto.my.id`)
-- **WebSocket Endpoints**:
-  - `ws://0.0.0.0:4000/ws/ui` (Operator Web Clients)
-  - `ws://0.0.0.0:4000/ws/bridge` (Node PC Agent Bridges)
-
----
-
-## Menjalankan Agent Bridge pada Node PC
-
-### 1. Jalankan Langsung via Cargo
+### 2. Run Agent Bridge Locally
 ```bash
 cd agent-bridge
 cargo run
 ```
 
-Atau tentukan variabel lingkungan secara langsung:
+To connect to a custom hub host or set a specific node identifier:
 ```bash
 HUB_URL=wss://agent.endrisusanto.my.id/ws/bridge PC_ID=NODE-LAB-01 cargo run
 ```
 
-### 2. Build Paket `.deb` untuk Instalasi Node PC
+### 3. Build & Install Debian Package on Node PCs
 ```bash
 ./build-deb.sh
-```
-
-Instal paket yang dihasilkan:
-```bash
 sudo dpkg -i dist/gba-agent-bridge_1.0.0_amd64.deb
-```
-Jalankan aplikasi dari Application Launcher atau terminal dengan mengetik:
-```bash
-gba-agent-bridge
 ```
 
 ---
 
-## Fitur Unggulan
+## Automated Releases
 
-- **AppTray Background Daemon**: Berjalan di System Tray dan otomatis *minimize to tray* jika jendela ditutup.
-- **Auto Device Discovery**: Deteksi otomatis build type (`USER` vs `USERDEBUG`), Android Major version, Security Patch Level (SPL), PDA, CSC, dan IP.
-- **Cuci SMR (Laundry / Scat Retry)**: Pemilihan file zip hasil test sebelumnya langsung dari disk node PC lokal, analisa XML cepat, dan penandaan modul gagal yang ingin dicuci.
-- **Streaming Live Log Drawer**: Console log realtime per-job dan per-device langsung di browser operator.
-- **Dark/Light Theme Toggle**: Sesuai dengan design system Octopus berbasis token CSS (`Plus Jakarta Sans` & `JetBrains Mono`).
+To bump version, tag, and trigger GitHub Actions release pipeline:
+```bash
+# Patch release (default: 1.0.0 -> 1.0.1)
+./release.sh patch "Description of changes"
+
+# Minor release (1.0.0 -> 1.1.0)
+./release.sh minor "Feature update"
+```
+
+GitHub Actions automatically builds and publishes Linux packages to the [Releases](https://github.com/endrisusanto/agent/releases) page.
