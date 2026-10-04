@@ -60,7 +60,7 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
       <div className="panel-header">
         <div className="panel-title">
           <span>Connected Fleet Devices</span>
-          <span className="badge badge-ready">{devices.length} Total</span>
+          <span className="badge badge-ready badge-xs">{devices.length} Total</span>
         </div>
 
         <div className="panel-controls">
@@ -78,7 +78,7 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
               <button
                 key={type}
                 className={`btn ${filterType === type ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '0.375rem 0.625rem', fontSize: '0.75rem', minHeight: '34px' }}
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.725rem', minHeight: '30px' }}
                 onClick={() => setFilterType(type)}
               >
                 {type.toUpperCase()}
@@ -89,9 +89,10 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
           {selectedSerials.length > 0 && (
             <button
               className="btn btn-primary"
+              style={{ minHeight: '30px', padding: '0.25rem 0.65rem' }}
               onClick={() => onOpenRunModal(selectedSerials)}
             >
-              <PlayIcon size={14} />
+              <PlayIcon size={13} />
               <span>Run Suite ({selectedSerials.length})</span>
             </button>
           )}
@@ -110,7 +111,7 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: '40px' }}>
+                <th style={{ width: '36px' }}>
                   <input
                     type="checkbox"
                     checked={allFilteredSelected}
@@ -143,20 +144,30 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
                       />
                     </td>
                     <td>
-                      <span className="badge badge-pc">{d.pcId}</span>
+                      <span className="badge badge-pc badge-xs">{d.pcId}</span>
                     </td>
                     <td>
                       <strong>{d.model || 'Unknown'}</strong>
                     </td>
                     <td className="mono-cell">{d.serial}</td>
                     <td>
-                      <span className={`badge ${d.is_userdebug ? 'badge-fail' : 'badge-pass'}`}>
-                        {d.is_userdebug ? 'USERDEBUG' : 'USER'}
+                      <span
+                        className={`badge badge-xs ${d.is_userdebug ? 'badge-fail' : 'badge-pass'}`}
+                        title={`Build Type: ${d.is_userdebug ? 'USERDEBUG' : 'USER'}`}
+                      >
+                        {d.is_userdebug ? (
+                          <>
+                            <span className="badge-text-full">USERDEBUG</span>
+                            <span className="badge-text-short">DEBUG</span>
+                          </>
+                        ) : (
+                          'USER'
+                        )}
                       </span>
                     </td>
                     <td>
-                      <div>Android {d.android || '-'}</div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>SPL: {d.security_patch || '-'}</div>
+                      <div style={{ fontSize: '0.75rem' }}>Android {d.android || '-'}</div>
+                      <div style={{ fontSize: '0.675rem', color: 'var(--text-secondary)' }}>SPL: {d.security_patch || '-'}</div>
                     </td>
                     <td className="mono-cell" style={{ fontSize: '0.725rem' }}>
                       <div>{d.pda || '-'}</div>
@@ -165,44 +176,44 @@ export const DeviceTableView: React.FC<DeviceTableViewProps> = ({
                     <td className="mono-cell">{d.ip || 'USB'}</td>
                     <td>
                       {d.busy ? (
-                        <span className="badge badge-busy" title={d.busy_reason || 'In active test run'}>
+                        <span className="badge badge-busy badge-xs" title={d.busy_reason || 'In active test run'}>
                           BUSY: {d.busy_reason || 'Running'}
                         </span>
                       ) : d.state === 'device' ? (
-                        <span className="badge badge-ready">READY</span>
+                        <span className="badge badge-ready badge-xs">READY</span>
                       ) : (
-                        <span className="badge badge-offline">{d.state.toUpperCase()}</span>
+                        <span className="badge badge-offline badge-xs">{d.state.toUpperCase()}</span>
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.375rem' }}>
+                      <div style={{ display: 'inline-flex', gap: '0.25rem' }}>
                         <button
                           className="btn btn-secondary"
-                          style={{ padding: '0.25rem 0.5rem' }}
+                          style={{ padding: '0.2rem 0.45rem', minHeight: '28px' }}
                           onClick={() => onToggleLamp(d.pcId, d.serial, true)}
                           title="Brighten screen lamp for physical identification"
                         >
-                          <LampIcon size={13} />
+                          <LampIcon size={12} />
                         </button>
 
                         {d.busy && (
                           <button
                             className="btn btn-secondary"
-                            style={{ padding: '0.25rem 0.5rem' }}
+                            style={{ padding: '0.2rem 0.45rem', minHeight: '28px' }}
                             onClick={() => onResetBusy(d.pcId)}
                             title="Reset busy state lock"
                           >
-                            <RefreshIcon size={13} />
+                            <RefreshIcon size={12} />
                           </button>
                         )}
 
                         <button
                           className="btn btn-primary"
-                          style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.725rem', minHeight: '28px' }}
                           onClick={() => onOpenRunModal([d.serial])}
                           disabled={d.busy}
                         >
-                          <PlayIcon size={12} />
+                          <PlayIcon size={11} />
                           <span>Run</span>
                         </button>
                       </div>
