@@ -123,12 +123,22 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                 🟢 Dot hijau menandakan perangkat terhubung
               </span>
             </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'nowrap',
+                overflowX: 'auto',
+                gap: '0.375rem',
+                paddingBottom: '0.375rem',
+                scrollbarWidth: 'thin',
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
               <button
                 type="button"
                 className={`filter-pill ${selectedModelFilter === 'ALL' ? 'active' : ''}`}
                 onClick={() => setSelectedModelFilter('ALL')}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', flexShrink: 0 }}
               >
                 <span>SEMUA</span>
                 <span className="pill-count">{zips.length}</span>
@@ -146,6 +156,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                     style={{
                       fontSize: '0.75rem',
                       padding: '0.25rem 0.625rem',
+                      flexShrink: 0,
                       border: connected ? '1px solid var(--accent-primary)' : undefined,
                       boxShadow: connected ? '0 0 8px rgba(86, 211, 100, 0.25)' : undefined,
                     }}
