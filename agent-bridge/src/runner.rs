@@ -135,15 +135,6 @@ pub fn execute_suite_run(
     })
 }
 
-pub fn terminate_process_tree(pid: u32) {
-    let _ = Command::new("pkill")
-        .args(["-P", &pid.to_string()])
-        .status();
-    let _ = Command::new("kill")
-        .args(["-9", &pid.to_string()])
-        .status();
-}
-
 fn chrono_timestamp() -> String {
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     format!("{}", now.as_secs())
