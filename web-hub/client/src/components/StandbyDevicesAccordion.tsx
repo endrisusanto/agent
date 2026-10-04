@@ -71,49 +71,65 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
     return devices.filter((d) => selectedSerials.includes(d.serial));
   }, [devices, selectedSerials]);
 
+  // Active locked model based on current selection
+  const activeSelectedModel = useMemo(() => {
+    return selectedDeviceObjs.length > 0 ? selectedDeviceObjs[0].model : null;
+  }, [selectedDeviceObjs]);
+
   // Determine the primary target model for execution (1 model at once enforcement)
   const targetExecutionModel = useMemo(() => {
+    if (activeSelectedModel) {
+      return activeSelectedModel;
+    }
     if (selectedModelFilter !== 'ALL') {
       return selectedModelFilter;
     }
-    if (selectedDeviceObjs.length > 0) {
-      return selectedDeviceObjs[0].model;
-    }
     return '';
-  }, [selectedModelFilter, selectedDeviceObjs]);
+  }, [activeSelectedModel, selectedModelFilter]);
 
-  // Filter selected serials to only those belonging to the target single model
-  const validModelSerials = useMemo(() => {
-    if (!targetExecutionModel) return [];
-    return selectedDeviceObjs
-      .filter((d) => d.model === targetExecutionModel)
-      .map((d) => d.serial);
-  }, [selectedDeviceObjs, targetExecutionModel]);
-
-  const isMixedModelSelected = useMemo(() => {
-    if (selectedDeviceObjs.length <= 1) return false;
-    const firstModel = selectedDeviceObjs[0].model;
-    return selectedDeviceObjs.some((d) => d.model !== firstModel);
-  }, [selectedDeviceObjs]);
+  // Devices that are eligible for selection in the current view
+  const selectableDevices = useMemo(() => {
+    if (activeSelectedModel) {
+      return filteredDevices.filter((d) => d.model === activeSelectedModel);
+    }
+    if (selectedModelFilter !== 'ALL') {
+      return filteredDevices.filter((d) => d.model === selectedModelFilter);
+    }
+    return filteredDevices;
+  }, [filteredDevices, activeSelectedModel, selectedModelFilter]);
 
   const allFilteredSelected =
-    filteredDevices.length > 0 &&
-    filteredDevices.every((d) => selectedSerials.includes(d.serial));
+    selectableDevices.length > 0 &&
+    selectableDevices.every((d) => selectedSerials.includes(d.serial));
 
   const handleSelectAllChange = () => {
     if (allFilteredSelected) {
-      onSelectAll([]);
+      const selectableSerials = new Set(selectableDevices.map((d) => d.serial));
+      onSelectAll(selectedSerials.filter((s) => !selectableSerials.has(s)));
     } else {
-      onSelectAll(filteredDevices.map((d) => d.serial));
+      const targetModel = activeSelectedModel || selectableDevices[0]?.model;
+      if (targetModel) {
+        const matchingSerials = filteredDevices
+          .filter((d) => d.model === targetModel)
+          .map((d) => d.serial);
+        onSelectAll(matchingSerials);
+      }
     }
   };
 
+  const handleDeviceRowClick = (dev: DeviceItem) => {
+    if (activeSelectedModel && dev.model !== activeSelectedModel) {
+      return; // Blocked: different model
+    }
+    onToggleSelect(dev.serial);
+  };
+
   const handleTriggerRun = () => {
-    if (validModelSerials.length === 0) {
+    if (selectedSerials.length === 0 || !targetExecutionModel) {
       alert('Pilih minimal 1 perangkat standby untuk menjalankan pengujian.');
       return;
     }
-    onDirectRunSuite(activeTestPlan, targetExecutionModel, validModelSerials);
+    onDirectRunSuite(activeTestPlan, targetExecutionModel, selectedSerials);
   };
 
   return (
@@ -154,13 +170,13 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
             type="button"
             className="btn btn-suite-primary"
             onClick={handleTriggerRun}
-            disabled={validModelSerials.length === 0}
-            title={`Jalankan ${activeTestPlan} untuk 1 model (${targetExecutionModel || 'Pilih Perangkat'})`}
+            disabled={selectedSerials.length === 0}
+            title={`Jalankan ${activeTestPlan} untuk model ${targetExecutionModel || 'Pilih Perangkat'}`}
           >
             <PlayIcon size={13} />
             <span>
-              {validModelSerials.length > 0
-                ? `Jalankan ${activeTestPlan} (${targetExecutionModel} • ${validModelSerials.length} Unit)`
+              {selectedSerials.length > 0
+                ? `Jalankan ${activeTestPlan} (${targetExecutionModel} • ${selectedSerials.length} Unit)`
                 : `Jalankan ${activeTestPlan}`}
             </span>
           </button>
@@ -169,10 +185,10 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
 
       {isExpanded && (
         <div className="accordion-body">
-          {/* Mixed Model Warning Notice */}
-          {isMixedModelSelected && (
+          {/* Active Model Lock Notice */}
+          {activeSelectedModel && (
             <div className="notice-banner">
-              ⚠️ <strong>Aturan 1 Model 1 Testplan:</strong> Anda memilih perangkat dari beberapa model berbeda. Eksekusi hanya akan dijalankan untuk model utama <strong>{targetExecutionModel}</strong> ({validModelSerials.length} unit).
+              🔒 <strong>Model Terkunci:</strong> Anda sedang memilih perangkat dengan model <strong>{activeSelectedModel}</strong> ({selectedSerials.length} unit terpilih). Checkbox model lain diblokir untuk memastikan 1 model per eksekusi.
             </div>
           )}
 
@@ -246,19 +262,24 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                 {filteredDevices.length > 0 ? (
                   filteredDevices.map((dev) => {
                     const isSelected = selectedSerials.includes(dev.serial);
+                    const isBlocked = activeSelectedModel !== null && dev.model !== activeSelectedModel;
+
                     return (
                       <tr
                         key={dev.serial}
-                        className={isSelected ? 'row-selected' : ''}
-                        onClick={() => onToggleSelect(dev.serial)}
-                        style={{ cursor: 'pointer' }}
+                        className={isBlocked ? 'row-blocked' : (isSelected ? 'row-selected' : '')}
+                        onClick={() => handleDeviceRowClick(dev)}
+                        style={{ cursor: isBlocked ? 'not-allowed' : 'pointer' }}
+                        title={isBlocked ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})` : undefined}
                       >
                         <td onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             className="checkbox-custom"
                             checked={isSelected}
-                            onChange={() => onToggleSelect(dev.serial)}
+                            disabled={isBlocked}
+                            onChange={() => handleDeviceRowClick(dev)}
+                            title={isBlocked ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})` : undefined}
                           />
                         </td>
                         <td className="mono font-medium">{dev.pcId}</td>
