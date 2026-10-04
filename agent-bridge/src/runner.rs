@@ -647,13 +647,39 @@ fn suite_workspace(root: &Path, suite_root: &Path, run_id: &str) -> Result<PathB
 // Tradefed Execution and Stdin/Stdout Stream
 // -------------------------------------------------------------------------------------------------
 
+fn append_file_line(path: &Path, line: &str) {
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn terminate_process_tree(pid: u32) {
+    let _ = Command::new("kill").arg("-15").arg(pid.to_string()).output();
+    let _ = Command::new("pkill").arg("-15").arg("-P").arg(pid.to_string()).output();
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = Command::new("kill").arg("-9").arg(pid.to_string()).output();
+    let _ = Command::new("pkill").arg("-9").arg("-P").arg(pid.to_string()).output();
+}
+
+fn suite_log_has_completion_marker(log_file: &Path) -> bool {
+    if let Ok(content) = fs::read_to_string(log_file) {
+        content
+            .lines()
+            .rev()
+            .take(120)
+            .any(|line| line.contains("Result/Log Location") || line.contains("=============== Summary ==============="))
+    } else {
+        false
+    }
+}
+
 fn run_suite_process(
     suite: &str,
     devices: &[String],
     executable: &Path,
     suite_command: &str,
     via_pipe: bool,
-    _log_file: &Path,
+    log_file: &Path,
     timeout_secs: u64,
     run_id: &str,
     _test_type: &str,
@@ -712,17 +738,20 @@ fn run_suite_process(
     }
 
     let log_tx_err = log_tx.clone();
+    let log_file_err = log_file.to_path_buf();
     let suite_err_tag = suite.to_string();
     if let Some(stderr) = child.stderr.take() {
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().flatten() {
+                append_file_line(&log_file_err, &line);
                 let _ = log_tx_err.send(format!("[{suite_err_tag}] [stderr] {line}"));
             }
         });
     }
 
     let log_tx_out = log_tx.clone();
+    let log_file_out = log_file.to_path_buf();
     let status_tx_clone = status_tx.clone();
     let suite_name = suite.to_string();
     let start_inst = Instant::now();
@@ -731,6 +760,7 @@ fn run_suite_process(
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().flatten() {
+                append_file_line(&log_file_out, &line);
                 let elapsed = start_inst.elapsed().as_secs();
                 let _ = status_tx_clone.send((suite_name.clone(), "Running".to_string(), elapsed));
                 let _ = log_tx_out.send(format!("[{suite_out_tag}] {line}"));
@@ -738,13 +768,38 @@ fn run_suite_process(
         });
     }
 
-    let status = child.wait().map_err(|e| e.to_string())?;
+    let mut code = 0;
+    let started = Instant::now();
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            code = status.code().unwrap_or(0);
+            break;
+        }
+
+        if suite_log_has_completion_marker(log_file) {
+            let _ = log_tx.send(format!("[AI Worker] {suite}: completion marker detected; closing tradefed console."));
+            terminate_process_tree(pid);
+            let _ = child.wait();
+            code = 0;
+            break;
+        }
+
+        if started.elapsed().as_secs() > timeout_secs {
+            let _ = log_tx.send(format!("[AI Worker] {suite}: timeout reached ({timeout_secs}s); terminating tradefed."));
+            terminate_process_tree(pid);
+            let _ = child.wait();
+            code = 124;
+            break;
+        }
+
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
     {
         let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
         map.remove(run_id);
     }
 
-    let code = status.code().unwrap_or(0);
     let _ = log_tx.send(format!("[AI Worker] {suite}: tradefed finished with code {code}"));
     Ok(code)
 }
