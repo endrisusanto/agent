@@ -6,15 +6,58 @@ use walkdir::WalkDir;
 use zip::ZipArchive;
 use crate::types::LaundryResultInfo;
 
-pub fn analyze_laundry_zip(zip_path: &str) -> Result<Vec<LaundryResultInfo>, String> {
-    let path = Path::new(zip_path);
-    if !path.is_file() {
-        return Err(format!("File zip tidak ditemukan: {zip_path}"));
+pub fn resolve_zip_path(zip_path: &str) -> Option<PathBuf> {
+    let p = Path::new(zip_path);
+    if p.is_file() {
+        return Some(p.to_path_buf());
     }
 
+    let filename = p.file_name()?.to_string_lossy();
+
+    // 1. Check environment variable CUCIAN_DIR
+    if let Ok(cucian_env) = std::env::var("CUCIAN_DIR") {
+        let candidate = PathBuf::from(cucian_env).join(filename.as_ref());
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    // 2. Check user HOME Downloads/CUCIAN
+    if let Ok(home) = std::env::var("HOME") {
+        let candidate = PathBuf::from(home).join("Downloads").join("CUCIAN").join(filename.as_ref());
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    // 3. Check all user directories in /home
+    if let Ok(entries) = std::fs::read_dir("/home") {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join("Downloads").join("CUCIAN").join(filename.as_ref());
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    // 4. Known directories
+    for dir in &["/home/endri-pro/Downloads/CUCIAN", "/cucian", "/tmp/CUCIAN"] {
+        let candidate = PathBuf::from(dir).join(filename.as_ref());
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+pub fn analyze_laundry_zip(zip_path: &str) -> Result<Vec<LaundryResultInfo>, String> {
+    let resolved = resolve_zip_path(zip_path)
+        .ok_or_else(|| format!("File zip tidak ditemukan: {zip_path}"))?;
+
     let temp = TempDir::new().map_err(|e| format!("Cannot create temp dir: {e}"))?;
-    extract_zip_safe(path, temp.path())?;
-    scan_laundry_result_infos(temp.path(), path)
+    extract_zip_safe(&resolved, temp.path())?;
+    scan_laundry_result_infos(temp.path(), &resolved)
 }
 
 fn extract_zip_safe(zip_path: &Path, dst: &Path) -> Result<(), String> {
