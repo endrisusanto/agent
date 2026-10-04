@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { CloseIcon, CheckIcon, RefreshIcon } from './Icons';
-import { LaundryZipItem, LaundryRow } from '../hooks/useFleetWebSocket';
+import React, { useState, useEffect, useMemo } from 'react';
+import { CloseIcon, CheckIcon } from './Icons';
+import { LaundryZipItem, LaundryRow, DeviceItem } from '../hooks/useFleetWebSocket';
 
 interface LaundrySelectModalProps {
   isOpen: boolean;
   onClose: () => void;
   pcId: string;
   zips: LaundryZipItem[];
+  devices?: DeviceItem[];
   laundryAnalysis: {
     pcId: string;
     zip_path: string;
@@ -30,12 +31,14 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   onClose,
   pcId,
   zips,
+  devices,
   laundryAnalysis,
   onAnalyzeZip,
   onConfirmSelection,
 }) => {
   const [selectedZipPath, setSelectedZipPath] = useState<string>('');
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  const [selectedModelFilter, setSelectedModelFilter] = useState<string>('ALL');
 
   useEffect(() => {
     if (laundryAnalysis && laundryAnalysis.rows) {
@@ -46,6 +49,33 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
       setSelectedRowIds(failed.length > 0 ? failed : laundryAnalysis.rows.map((r) => r.id));
     }
   }, [laundryAnalysis]);
+
+  // Extract unique models with counts from all available laundry zips
+  const modelChips = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (zips || []).forEach((z) => {
+      const m = z.model || 'UNKNOWN';
+      counts[m] = (counts[m] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [zips]);
+
+  // Check if a model currently has connected devices
+  const isModelDeviceConnected = (modelName: string): boolean => {
+    if (!devices || devices.length === 0) return false;
+    if (modelName === 'ALL') return devices.length > 0;
+    const mClean = modelName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return devices.some((d) => {
+      const dModel = (d.model || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      return dModel === mClean || dModel.includes(mClean) || mClean.includes(dModel);
+    });
+  };
+
+  // Filtered zips based on selected model chip
+  const filteredZips = useMemo(() => {
+    if (selectedModelFilter === 'ALL') return zips;
+    return (zips || []).filter((z) => (z.model || 'UNKNOWN') === selectedModelFilter);
+  }, [zips, selectedModelFilter]);
 
   if (!isOpen) return null;
 
@@ -71,7 +101,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
-      <div className="modal-dialog" style={{ maxWidth: '820px' }}>
+      <div className="modal-dialog" style={{ maxWidth: '840px' }}>
         <div className="modal-header">
           <div>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Select Laundry Result Zip ({pcId})</h3>
@@ -85,15 +115,73 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
         </div>
 
         <div className="modal-body">
+          {/* Model Filter Chips */}
+          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Filter by Target Model</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                🟢 Dot hijau menandakan perangkat terhubung
+              </span>
+            </label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
+              <button
+                type="button"
+                className={`filter-pill ${selectedModelFilter === 'ALL' ? 'active' : ''}`}
+                onClick={() => setSelectedModelFilter('ALL')}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem' }}
+              >
+                <span>SEMUA</span>
+                <span className="pill-count">{zips.length}</span>
+              </button>
+
+              {modelChips.map(([modelName, count]) => {
+                const connected = isModelDeviceConnected(modelName);
+                const isSelected = selectedModelFilter === modelName;
+                return (
+                  <button
+                    key={modelName}
+                    type="button"
+                    className={`filter-pill ${isSelected ? 'active' : ''}`}
+                    onClick={() => setSelectedModelFilter(modelName)}
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.625rem',
+                      border: connected ? '1px solid var(--accent-primary)' : undefined,
+                      boxShadow: connected ? '0 0 8px rgba(86, 211, 100, 0.25)' : undefined,
+                    }}
+                    title={connected ? `${modelName} (Perangkat Tersambung)` : modelName}
+                  >
+                    {connected && (
+                      <span
+                        style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          backgroundColor: '#56d364',
+                          display: 'inline-block',
+                          boxShadow: '0 0 6px #56d364',
+                        }}
+                      />
+                    )}
+                    <span>{modelName}</span>
+                    <span className="pill-count">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="form-group">
-            <label className="form-label">Available Result Zips on {pcId}</label>
-            {zips.length === 0 ? (
-              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                No result zip files found on {pcId} Results directory.
+            <label className="form-label">
+              Available Result Zips on {pcId} ({filteredZips.length} files)
+            </label>
+            {filteredZips.length === 0 ? (
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', padding: '0.5rem 0' }}>
+                Tidak ada file zip hasil pengujian yang cocok dengan filter model "{selectedModelFilter}".
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', maxHeight: '180px', overflowY: 'auto' }}>
-                {zips.map((z) => (
+                {filteredZips.map((z) => (
                   <div
                     key={z.path}
                     onClick={() => handleSelectZip(z.path)}

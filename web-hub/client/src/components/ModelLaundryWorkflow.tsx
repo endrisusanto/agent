@@ -22,22 +22,24 @@ export function isModelMatch(m1?: string, m2?: string): boolean {
 }
 
 export function detectZipPlanKind(rows?: LaundryRow[], zipPath?: string, existingPlan?: string): 'SKU' | 'SMR' | 'Normal' {
+  const rowList = Array.isArray(rows) ? rows : [];
+  const directRowPlan = rowList.find((r) => r.plan && ['SKU', 'SMR', 'Normal'].includes(r.plan))?.plan;
+  if (directRowPlan && ['SKU', 'SMR', 'Normal'].includes(directRowPlan)) {
+    return directRowPlan as 'SKU' | 'SMR' | 'Normal';
+  }
+
+  const zipLower = (zipPath || '').toLowerCase();
+  if (zipLower.includes('ctssku') || zipLower.includes('cts_sku') || zipLower.includes('sku')) {
+    return 'SKU';
+  }
+  if (zipLower.includes('ctssmr') || zipLower.includes('cts_smr') || zipLower.includes('gtsmr') || zipLower.includes('gtssmr') || zipLower.includes('smr') || zipLower.includes('sts')) {
+    return 'SMR';
+  }
+
   if (existingPlan && ['SKU', 'SMR', 'Normal'].includes(existingPlan)) {
     return existingPlan as 'SKU' | 'SMR' | 'Normal';
   }
-  const rowList = Array.isArray(rows) ? rows : [];
-  const text = (
-    (zipPath || '') +
-    ' ' +
-    rowList.map((r) => `${r.suite || ''} ${r.plan || ''} ${r.subtestcases || ''} ${r.testcase || ''}`).join(' ')
-  ).toLowerCase();
 
-  if (text.includes('variant') || text.includes('sku') || text.includes('ctssku')) {
-    return 'SKU';
-  }
-  if (text.includes('smr') || text.includes('gtsmr') || text.includes('gtssmr') || text.includes('ctssmr') || text.includes('sts')) {
-    return 'SMR';
-  }
   return 'Normal';
 }
 

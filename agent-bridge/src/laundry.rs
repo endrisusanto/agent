@@ -180,18 +180,28 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
     Ok(results)
 }
 
-fn detect_laundry_plan_kind(content: &str, xml_path: &Path, original_zip_path: &Path) -> String {
-    let lower_content = content.to_lowercase();
-    let path_str = xml_path.to_string_lossy().to_lowercase();
+fn detect_laundry_plan_kind(content: &str, _xml_path: &Path, original_zip_path: &Path) -> String {
+    // 1. Check filename / zip path first
     let zip_str = original_zip_path.to_string_lossy().to_lowercase();
-    let combined = format!("{lower_content} {path_str} {zip_str}");
-
-    if combined.contains("variant") || combined.contains("sku") || combined.contains("ctssku") {
+    if zip_str.contains("ctssku") || zip_str.contains("cts_sku") || zip_str.contains("sku") {
         return "SKU".to_string();
     }
-    if combined.contains("smr") || combined.contains("gtssmr") || combined.contains("gtsmr") || combined.contains("ctssmr") || combined.contains("sts") {
+    if zip_str.contains("ctssmr") || zip_str.contains("cts_smr") || zip_str.contains("gtsmr") || zip_str.contains("gtssmr") || zip_str.contains("smr") || zip_str.contains("sts") {
         return "SMR".to_string();
     }
+
+    // 2. Extract suite_plan and command_line_args from <Result> tag
+    let suite_plan = parse_xml_string_attr(content, "suite_plan").unwrap_or_default().to_lowercase();
+    let cmd_args = parse_xml_string_attr(content, "command_line_args").unwrap_or_default().to_lowercase();
+    let combined_plan = format!("{suite_plan} {cmd_args}");
+
+    if combined_plan.contains("ctssku") || combined_plan.contains("cts-sku") || combined_plan.contains("subplan ctssku") || combined_plan.contains("subplan sku") {
+        return "SKU".to_string();
+    }
+    if combined_plan.contains("ctssmr") || combined_plan.contains("cts-smr") || combined_plan.contains("gtsmr") || combined_plan.contains("gtssmr") || combined_plan.contains("subplan smr") || combined_plan.contains("sts") {
+        return "SMR".to_string();
+    }
+
     "Normal".to_string()
 }
 

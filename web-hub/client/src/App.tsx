@@ -238,6 +238,7 @@ export const App: React.FC = () => {
           onClose={() => setIsLaundryModalOpen(false)}
           pcId={pickerPcId || activePickerBridge?.pcId || 'LOCAL'}
           zips={zipsForPicker}
+          devices={devices}
           laundryAnalysis={laundryAnalysis}
           onAnalyzeZip={analyzeLaundry}
           onConfirmSelection={(zipPath, rows) => {
