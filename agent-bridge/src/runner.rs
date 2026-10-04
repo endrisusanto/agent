@@ -501,6 +501,71 @@ fn resolve_sts_root(root: &Path, month: &str, android: &str) -> Result<PathBuf, 
     }
 }
 
+fn parse_xml_attribute(line: &str, attr: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let pattern = format!("{}={}", attr, quote);
+        if let Some(start_idx) = line.find(&pattern) {
+            let val_start = start_idx + pattern.len();
+            if let Some(end_idx) = line[val_start..].find(quote) {
+                return Some(line[val_start..val_start + end_idx].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn get_suite_info_from_xml(xml_path: &Path) -> Option<(String, String, String)> {
+    let file = fs::File::open(xml_path).ok()?;
+    let reader = BufReader::new(file);
+    for line_result in reader.lines().take(50) {
+        let line = line_result.ok()?;
+        if line.contains("<Result ") {
+            let name = parse_xml_attribute(&line, "suite_name").unwrap_or_default();
+            let version = parse_xml_attribute(&line, "suite_version").unwrap_or_default();
+            let build = parse_xml_attribute(&line, "suite_build_number").unwrap_or_default();
+            return Some((name, version, build));
+        }
+    }
+    None
+}
+
+fn suite_version_from_result(result_dir: &Path) -> Option<String> {
+    let (_, version, _) = get_suite_info_from_xml(&result_dir.join("test_result.xml"))?;
+    suite_version_from_result_version(&version)
+}
+
+fn suite_version_from_result_version(version: &str) -> Option<String> {
+    let clean = version.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    let prefix = clean.split_whitespace().next().unwrap_or(clean);
+    let normalized = prefix
+        .trim_start_matches(|ch: char| !ch.is_ascii_digit())
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.' || *ch == '_' || *ch == 'r' || *ch == 'R')
+        .collect::<String>()
+        .replace("_R", "_r");
+    if normalized.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn suite_root_for_laundry_result(root: &Path, suite: &str, devices: &[String], result_dir: &Path) -> Result<PathBuf, String> {
+    if suite == "CTS" || suite == "GTS" {
+        if let Some(version) = suite_version_from_result(result_dir) {
+            return if suite == "CTS" {
+                resolve_cts_root(root, &version)
+            } else {
+                resolve_gts_root(root, &version)
+            };
+        }
+    }
+    suite_root_for_device(root, suite, devices)
+}
+
 fn suite_root_for_device(root: &Path, suite: &str, devices: &[String]) -> Result<PathBuf, String> {
     let first = devices.first().ok_or_else(|| "No device connected for suite resolution".to_string())?;
     let props = device_props(first).unwrap_or_default();
@@ -918,7 +983,7 @@ fn run_laundry_retries(
 ) -> Result<Vec<i32>, String> {
     let mut codes = Vec::new();
     for (index, source) in source_results.iter().enumerate() {
-        let suite_root = suite_root_for_device(root, suite, devices)?;
+        let suite_root = suite_root_for_laundry_result(root, suite, devices, source)?;
         let suite_workspace = suite_workspace(root, &suite_root, run_id)?;
         let tradefed_name = match suite {
             "CTS" => "cts-tradefed",
