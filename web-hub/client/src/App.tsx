@@ -154,7 +154,10 @@ export const App: React.FC = () => {
         timeout_secs: 86400,
       });
     });
-    setIsTerminalModalOpen(true);
+    // Smoothly focus on running workflow section instead of opening popup modal
+    if (runningSectionRef.current) {
+      runningSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const handleRunLaundrySuite = (pcId: string, payload: any) => {
@@ -162,7 +165,10 @@ export const App: React.FC = () => {
     const finalPayload = { ...payload, run_id: runId };
     setTerminalSelectedRunId(runId);
     runSuite(pcId, finalPayload);
-    setIsTerminalModalOpen(true);
+    // Smoothly focus on running workflow section instead of opening popup modal
+    if (runningSectionRef.current) {
+      runningSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const activePickerBridge = bridges.find((b) => b.pcId === pickerPcId) || bridges[0];
