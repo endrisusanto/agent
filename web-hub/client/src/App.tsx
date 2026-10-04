@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useFleetWebSocket, LaundryRow } from './hooks/useFleetWebSocket';
 import { FleetHeader } from './components/FleetHeader';
+import { FilterToolbarCard } from './components/FilterToolbarCard';
 import { LaundryWorkflowSection } from './components/LaundryWorkflowSection';
 import { StandbyDevicesAccordion } from './components/StandbyDevicesAccordion';
 import { RunningWorkflowAccordion } from './components/RunningWorkflowAccordion';
@@ -30,6 +31,13 @@ export const App: React.FC = () => {
   const [isLaundryModalOpen, setIsLaundryModalOpen] = useState(false);
   const [activeWorkflowIdForPicker, setActiveWorkflowIdForPicker] = useState<string>('');
   const [pickerPcId, setPickerPcId] = useState<string>('');
+
+  // Top Card Filter States
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPcFilter, setSelectedPcFilter] = useState<string>('ALL');
+  const [selectedModeFilter, setSelectedModeFilter] = useState<'all' | 'user' | 'userdebug' | 'busy'>('all');
+
+  const runningSectionRef = useRef<HTMLDivElement>(null);
 
   // Collect all available zips across all connected bridges
   const allAvailableZips = useMemo(() => {
@@ -155,11 +163,30 @@ export const App: React.FC = () => {
           onToggleTheme={toggleTheme}
         />
 
-        {/* Active Running Test Suites & Live Logs */}
-        <RunningWorkflowAccordion
-          activeJobs={activeJobs}
-          onCancelJob={cancelRun}
+        {/* Standalone Filter Toolbar Card at Top */}
+        <FilterToolbarCard
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          selectedPcId={selectedPcFilter}
+          onPcIdChange={setSelectedPcFilter}
+          selectedMode={selectedModeFilter}
+          onModeChange={setSelectedModeFilter}
+          bridges={bridges}
+          activeJobsCount={activeJobs.length}
+          onToggleTerminalLogs={() => {
+            if (runningSectionRef.current) {
+              runningSectionRef.current.scrollIntoView({ behavior: 'smooth' });
+            }
+          }}
         />
+
+        {/* Active Running Test Suites & Live Logs */}
+        <div ref={runningSectionRef}>
+          <RunningWorkflowAccordion
+            activeJobs={activeJobs}
+            onCancelJob={cancelRun}
+          />
+        </div>
 
         {/* Top Section: Model Laundry Workflows (Octopus-style Accordion) */}
         <LaundryWorkflowSection
@@ -184,6 +211,9 @@ export const App: React.FC = () => {
           onDirectRunSuite={handleDirectRunSuite}
           onToggleLamp={setDeviceLamp}
           onResetBusy={resetBusy}
+          searchQuery={searchQuery}
+          selectedPcFilter={selectedPcFilter}
+          filterType={selectedModeFilter}
         />
 
         {/* Results History */}

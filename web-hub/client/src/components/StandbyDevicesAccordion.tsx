@@ -12,6 +12,9 @@ interface StandbyDevicesAccordionProps {
   onDirectRunSuite: (testType: TestPlanType, targetModel: string, serials: string[]) => void;
   onToggleLamp: (pcId: string, serial: string, brighten: boolean) => void;
   onResetBusy: (pcId: string) => void;
+  searchQuery?: string;
+  selectedPcFilter?: string;
+  filterType?: 'all' | 'user' | 'userdebug' | 'busy';
 }
 
 export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = ({
@@ -22,12 +25,13 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   onDirectRunSuite,
   onToggleLamp,
   onResetBusy,
+  searchQuery = '',
+  selectedPcFilter = 'ALL',
+  filterType = 'all',
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeTestPlan, setActiveTestPlan] = useState<TestPlanType>('SMR');
-  const [filterType, setFilterType] = useState<'all' | 'user' | 'userdebug' | 'busy'>('all');
   const [selectedModelFilter, setSelectedModelFilter] = useState<string>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
 
   // Compute model counts for model filter pills
   const modelCounts = useMemo(() => {
@@ -44,27 +48,35 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   }, [modelCounts]);
 
   const filteredDevices = useMemo(() => {
+    const activeFilterType = filterType;
+    const activeSearch = searchQuery.trim().toLowerCase();
+    const activePc = selectedPcFilter;
+
     return devices.filter((d) => {
-      if (filterType === 'user' && d.is_userdebug) return false;
-      if (filterType === 'userdebug' && !d.is_userdebug) return false;
-      if (filterType === 'busy' && !d.busy) return false;
+      if (activePc !== 'ALL' && d.pcId !== activePc) {
+        return false;
+      }
+      if (activeFilterType === 'user' && d.is_userdebug) return false;
+      if (activeFilterType === 'userdebug' && !d.is_userdebug) return false;
+      if (activeFilterType === 'busy' && !d.busy) return false;
 
       if (selectedModelFilter !== 'ALL' && d.model !== selectedModelFilter) {
         return false;
       }
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (activeSearch) {
         return (
-          d.model.toLowerCase().includes(q) ||
-          d.serial.toLowerCase().includes(q) ||
-          d.pcId.toLowerCase().includes(q) ||
-          d.pda.toLowerCase().includes(q)
+          d.model.toLowerCase().includes(activeSearch) ||
+          d.serial.toLowerCase().includes(activeSearch) ||
+          d.pcId.toLowerCase().includes(activeSearch) ||
+          d.pda.toLowerCase().includes(activeSearch) ||
+          (d.csc && d.csc.toLowerCase().includes(activeSearch)) ||
+          (d.sales_code && d.sales_code.toLowerCase().includes(activeSearch))
         );
       }
       return true;
     });
-  }, [devices, filterType, selectedModelFilter, searchQuery]);
+  }, [devices, filterType, selectedPcFilter, selectedModelFilter, searchQuery]);
 
   // Selected devices objects
   const selectedDeviceObjs = useMemo(() => {
@@ -192,9 +204,9 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
             </div>
           )}
 
-          {/* Model Filter Pills & Search Controls */}
+          {/* Model Filter Pills */}
           <div className="standby-toolbar">
-            <div className="model-pills-bar">
+            <div className="model-pills-bar" style={{ width: '100%' }}>
               <button
                 className={`model-pill ${selectedModelFilter === 'ALL' ? 'active' : ''}`}
                 onClick={() => setSelectedModelFilter('ALL')}
@@ -210,29 +222,6 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                   {model} <span className="pill-count">{modelCounts[model]}</span>
                 </button>
               ))}
-            </div>
-
-            <div className="standby-filter-actions">
-              <input
-                type="text"
-                className="form-input"
-                placeholder="Search model, serial, PC..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ width: '220px' }}
-              />
-
-              <div className="type-filter-group">
-                {(['all', 'user', 'userdebug', 'busy'] as const).map((type) => (
-                  <button
-                    key={type}
-                    className={`btn ${filterType === type ? 'btn-primary' : 'btn-secondary'} btn-xs`}
-                    onClick={() => setFilterType(type)}
-                  >
-                    {type.toUpperCase()}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
 
