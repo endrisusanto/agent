@@ -123,7 +123,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
 
           {selectedZipPath && (
             <div className="form-group">
-              <label className="form-label">Module Analysis Preview</label>
+              <label className="form-label">Module Analysis & Test Run Details</label>
               {!laundryAnalysis ? (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
                   Analyzing test_result.xml on node...
@@ -137,47 +137,137 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                   No modules found in this result.
                 </div>
               ) : (
-                <div className="table-responsive" style={{ maxHeight: '240px', overflowY: 'auto' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '40px' }}>Select</th>
-                        <th>Suite</th>
-                        <th>Testcase / Module</th>
-                        <th>Total</th>
-                        <th>Passed</th>
-                        <th>Failed</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {laundryAnalysis.rows.map((r) => {
-                        const isChecked = selectedRowIds.includes(r.id);
-                        return (
-                          <tr key={r.id}>
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => handleToggleRow(r.id)}
-                              />
-                            </td>
-                            <td><span className="badge badge-pc">{r.suite}</span></td>
-                            <td className="mono-cell" style={{ fontSize: '0.75rem' }}>{r.testcase}</td>
-                            <td>{r.total}</td>
-                            <td style={{ color: 'var(--status-ready-text)' }}>{r.passed}</td>
-                            <td style={{ color: r.failed > 0 ? 'var(--status-fail-text)' : 'inherit' }}>{r.failed}</td>
-                            <td>
-                              <span className={`badge ${r.failed > 0 ? 'badge-fail' : 'badge-pass'}`}>
-                                {r.status}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  {/* Summary Header for Selected Zip (Plan, AP Version, Model, Modules) */}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                      gap: '0.625rem',
+                      padding: '0.75rem 0.875rem',
+                      backgroundColor: 'var(--bg-subtle)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-subtle)',
+                      marginBottom: '0.75rem',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Test Run (Plan)
+                      </div>
+                      <div style={{ marginTop: '0.25rem' }}>
+                        <span
+                          className={`badge ${
+                            laundryAnalysis.rows[0]?.plan === 'SMR'
+                              ? 'badge-unit'
+                              : laundryAnalysis.rows[0]?.plan === 'SKU'
+                              ? 'badge-running'
+                              : 'badge-pc'
+                          }`}
+                          style={{ fontWeight: 700, fontSize: '0.75rem' }}
+                        >
+                          {laundryAnalysis.rows[0]?.plan || 'Normal'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        AP Version
+                      </div>
+                      <div className="mono-cell" style={{ fontSize: '0.8125rem', fontWeight: 600, marginTop: '0.25rem', color: 'var(--text-primary)' }}>
+                        {laundryAnalysis.rows[0]?.ap_version || '-'}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Target Model
+                      </div>
+                      <div className="mono-cell" style={{ fontSize: '0.8125rem', fontWeight: 600, marginTop: '0.25rem', color: 'var(--text-primary)' }}>
+                        {laundryAnalysis.rows[0]?.model || '-'}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Execution Result
+                      </div>
+                      <div style={{ fontSize: '0.8125rem', marginTop: '0.25rem' }}>
+                        <span style={{ color: 'var(--status-ready-text)', fontWeight: 600 }}>
+                          {laundryAnalysis.rows.reduce((acc, r) => acc + (r.passed || 0), 0)} Pass
+                        </span>
+                        {laundryAnalysis.rows.reduce((acc, r) => acc + (r.failed || 0), 0) > 0 && (
+                          <span style={{ color: 'var(--status-fail-text)', fontWeight: 600, marginLeft: '0.5rem' }}>
+                            {laundryAnalysis.rows.reduce((acc, r) => acc + (r.failed || 0), 0)} Fail
+                          </span>
+                        )}
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.375rem' }}>
+                          ({laundryAnalysis.rows.length} modules)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Modules Data Table */}
+                  <div className="table-responsive" style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40px' }}>Select</th>
+                          <th>Suite</th>
+                          <th>Plan</th>
+                          <th>AP Version</th>
+                          <th>Testcase / Module</th>
+                          <th>Total</th>
+                          <th>Passed</th>
+                          <th>Failed</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {laundryAnalysis.rows.map((r) => {
+                          const isChecked = selectedRowIds.includes(r.id);
+                          return (
+                            <tr key={r.id}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => handleToggleRow(r.id)}
+                                />
+                              </td>
+                              <td><span className="badge badge-pc">{r.suite}</span></td>
+                              <td>
+                                <span
+                                  className={`badge ${
+                                    r.plan === 'SMR'
+                                      ? 'badge-unit'
+                                      : r.plan === 'SKU'
+                                      ? 'badge-running'
+                                      : 'badge-pc'
+                                  }`}
+                                  style={{ fontSize: '0.6875rem' }}
+                                >
+                                  {r.plan || 'Normal'}
+                                </span>
+                              </td>
+                              <td className="mono-cell" style={{ fontSize: '0.75rem' }}>
+                                {r.ap_version || '-'}
+                              </td>
+                              <td className="mono-cell" style={{ fontSize: '0.75rem' }}>{r.testcase}</td>
+                              <td>{r.total}</td>
+                              <td style={{ color: 'var(--status-ready-text)' }}>{r.passed}</td>
+                              <td style={{ color: r.failed > 0 ? 'var(--status-fail-text)' : 'inherit' }}>{r.failed}</td>
+                              <td>
+                                <span className={`badge ${r.failed > 0 ? 'badge-fail' : 'badge-pass'}`}>
+                                  {r.status}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           )}
