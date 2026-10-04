@@ -1,0 +1,12 @@
+services:
+  agent-web-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-web-hub
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
