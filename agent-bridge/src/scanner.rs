@@ -132,16 +132,48 @@ fn extract_model_from_filename(filename: &str) -> Option<String> {
 pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
     let mut dirs_to_scan = Vec::new();
 
-    // 1. Primary CUCIAN directory
-    let cucian_path = std::path::PathBuf::from("/home/endri-pro/Downloads/CUCIAN");
-    if cucian_path.is_dir() {
-        dirs_to_scan.push(cucian_path);
+    // 1. Custom environment variable
+    if let Ok(cucian_env) = std::env::var("CUCIAN_DIR") {
+        let p = std::path::PathBuf::from(cucian_env);
+        if p.is_dir() && !dirs_to_scan.contains(&p) {
+            dirs_to_scan.push(p);
+        }
     }
 
-    // 2. AUTO Results directory
+    // 2. User HOME Downloads/CUCIAN
+    if let Ok(home) = std::env::var("HOME") {
+        let home_cucian = std::path::PathBuf::from(home).join("Downloads").join("CUCIAN");
+        if home_cucian.is_dir() && !dirs_to_scan.contains(&home_cucian) {
+            dirs_to_scan.push(home_cucian);
+        }
+    }
+
+    // 3. Scan all user directories in /home
+    if let Ok(entries) = fs::read_dir("/home") {
+        for entry in entries.flatten() {
+            let u_cucian = entry.path().join("Downloads").join("CUCIAN");
+            if u_cucian.is_dir() && !dirs_to_scan.contains(&u_cucian) {
+                dirs_to_scan.push(u_cucian);
+            }
+        }
+    }
+
+    // 4. Specific known paths & root/container mounts
+    for candidate in &["/home/endri-pro/Downloads/CUCIAN", "/cucian", "/tmp/CUCIAN"] {
+        let p = std::path::PathBuf::from(candidate);
+        if p.is_dir() && !dirs_to_scan.contains(&p) {
+            dirs_to_scan.push(p);
+        }
+    }
+
+    // 5. AUTO root paths
     let results_dir = auto_root.join("Results");
     if results_dir.is_dir() && !dirs_to_scan.contains(&results_dir) {
         dirs_to_scan.push(results_dir);
+    }
+    let auto_cucian = auto_root.join("CUCIAN");
+    if auto_cucian.is_dir() && !dirs_to_scan.contains(&auto_cucian) {
+        dirs_to_scan.push(auto_cucian);
     }
 
     let mut zips = Vec::new();

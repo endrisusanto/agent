@@ -85,6 +85,68 @@ export interface ActiveJob {
   recentLogs: string[];
 }
 
+import fs from 'fs';
+
+function extractModelFromFilename(filename: string): string | undefined {
+  const base = filename.replace(/\.zip$/i, '');
+  const firstToken = base.split('_')[0] || base;
+  if (/^sm-/i.test(firstToken)) {
+    return firstToken.toUpperCase();
+  }
+  const match = firstToken.match(/^[A-Za-z0-9]+/);
+  if (match && match[0].length >= 4) {
+    const raw = match[0].toUpperCase();
+    if (raw.startsWith('A') || raw.startsWith('S') || raw.startsWith('F') || raw.startsWith('M') || raw.startsWith('X') || raw.startsWith('T')) {
+      return `SM-${raw}`;
+    }
+    return raw;
+  }
+  return undefined;
+}
+
+export function scanLocalCucianZips(): LaundryZipItem[] {
+  const dirs = [
+    process.env.CUCIAN_DIR,
+    '/cucian',
+    '/home/endri-pro/Downloads/CUCIAN',
+    process.env.HOME ? path.join(process.env.HOME, 'Downloads/CUCIAN') : undefined,
+    '/tmp/CUCIAN'
+  ].filter((d): d is string => Boolean(d));
+
+  const zips: LaundryZipItem[] = [];
+  const seen = new Set<string>();
+
+  for (const dir of dirs) {
+    try {
+      if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          if (file.toLowerCase().endsWith('.zip')) {
+            const fullPath = path.join(dir, file);
+            if (!seen.has(fullPath)) {
+              seen.add(fullPath);
+              try {
+                const stat = fs.statSync(fullPath);
+                zips.push({
+                  filename: file,
+                  path: fullPath,
+                  sizeBytes: stat.size,
+                  modifiedAt: stat.mtimeMs,
+                  model: extractModelFromFilename(file),
+                  pcId: 'syncmaster'
+                });
+              } catch (_) {}
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  zips.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  return zips;
+}
+
 // In-Memory Fleet State
 const bridges = new Map<string, BridgeNode>();
 const devices = new Map<string, DeviceInfo>();
@@ -101,6 +163,7 @@ app.use(express.static(clientDist));
 
 // REST: Fleet Diagnostics & Status
 app.get('/api/fleet/status', (_req, res) => {
+  const localZips = scanLocalCucianZips();
   res.json({
     onlineBridges: Array.from(bridges.values()).map(b => ({
       pcId: b.pcId,
@@ -108,7 +171,7 @@ app.get('/api/fleet/status', (_req, res) => {
       ip: b.ip,
       autoRoot: b.autoRoot,
       connectedAt: b.connectedAt,
-      zipCount: b.laundryZips.length
+      zipCount: (b.laundryZips && b.laundryZips.length > 0) ? b.laundryZips.length : localZips.length
     })),
     totalDevices: devices.size,
     activeJobsCount: activeJobs.size
@@ -137,17 +200,37 @@ server.on('upgrade', (request, socket, head) => {
 
 // Broadcast full fleet state to all connected Web UI clients
 function broadcastFleetState() {
-  const payload = JSON.stringify({
-    type: 'FLEET_STATE',
-    timestamp: Date.now(),
-    bridges: Array.from(bridges.values()).map(b => ({
+  const localZips = scanLocalCucianZips();
+
+  const bridgeList = Array.from(bridges.values()).map(b => {
+    // If bridge reported no zips or fewer zips, enrich with local scanned zips
+    const finalZips = (b.laundryZips && b.laundryZips.length > 0) ? b.laundryZips : localZips;
+    return {
       pcId: b.pcId,
       os: b.os,
       ip: b.ip,
       autoRoot: b.autoRoot,
       connectedAt: b.connectedAt,
-      laundryZips: b.laundryZips
-    })),
+      laundryZips: finalZips
+    };
+  });
+
+  // If no bridges are connected, supply a default server entry so UI can still browse zips
+  if (bridgeList.length === 0 && localZips.length > 0) {
+    bridgeList.push({
+      pcId: 'syncmaster',
+      os: 'linux',
+      ip: '127.0.0.1',
+      autoRoot: '/cucian',
+      connectedAt: Date.now(),
+      laundryZips: localZips
+    });
+  }
+
+  const payload = JSON.stringify({
+    type: 'FLEET_STATE',
+    timestamp: Date.now(),
+    bridges: bridgeList,
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50)
