@@ -93,8 +93,15 @@ HUB_URL=wss://agent.endrisusanto.my.id/ws/bridge PC_ID=NODE-LAB-01 cargo run
 
 ### 3. Build & Install Debian Package on Node PCs
 ```bash
+# Build .deb dan otomatis install langsung ke sistem:
+npm run build:install
+# atau:
+./build-deb.sh --install
+
+# Hanya build .deb tanpa auto-install:
+npm run build:deb
+# atau:
 ./build-deb.sh
-sudo dpkg -i dist/gba-agent-bridge_1.0.0_amd64.deb
 ```
 
 ---

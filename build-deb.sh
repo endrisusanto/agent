@@ -3,6 +3,21 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUTO_INSTALL=false
+
+for arg in "$@"; do
+    case "$arg" in
+        -i|--install)
+            AUTO_INSTALL=true
+            ;;
+        -h|--help)
+            echo "Usage: ./build-deb.sh [--install|-i]"
+            echo "  --install, -i   Automatically install .deb package after build"
+            exit 0
+            ;;
+    esac
+done
+
 VERSION=$(grep -m1 'version' "${ROOT_DIR}/agent-bridge/Cargo.toml" | cut -d '"' -f 2)
 PKG_NAME="gba-agent-bridge"
 ARCH="amd64"
@@ -86,6 +101,19 @@ echo "--------------------------------------------------------"
 echo "Package File: ${DIST_DIR}/${DEB_NAME}"
 echo "File Size:    $(du -h "${DIST_DIR}/${DEB_NAME}" | cut -f1)"
 echo "--------------------------------------------------------"
-echo "Untuk menginstall di node Linux, jalankan:"
-echo "  sudo dpkg -i ${DIST_DIR}/${DEB_NAME}"
-echo "--------------------------------------------------------"
+
+if [ "$AUTO_INSTALL" = true ]; then
+    echo "==> [Auto-Install] Installing ${DEB_NAME}..."
+    if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+        dpkg -i "${DIST_DIR}/${DEB_NAME}"
+    else
+        sudo dpkg -i "${DIST_DIR}/${DEB_NAME}"
+    fi
+    echo "==> [✔] Package ${PKG_NAME} successfully installed and ready!"
+else
+    echo "Untuk menginstall di node Linux, jalankan:"
+    echo "  sudo dpkg -i ${DIST_DIR}/${DEB_NAME}"
+    echo "Atau jalankan build dengan opsi auto-install:"
+    echo "  ./build-deb.sh --install"
+    echo "--------------------------------------------------------"
+fi
