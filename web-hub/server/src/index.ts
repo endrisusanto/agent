@@ -490,12 +490,11 @@ wssUi.on('connection', (ws) => {
             if (job) {
               job.status = 'CANCELLED';
               job.recentLogs.push(`[Hub] Flow run ${run_id} cancelled by user.`);
-              broadcastActiveJobs();
+              broadcastFleetState();
               setTimeout(() => {
                 activeJobs.delete(run_id);
                 jobHistory.unshift(job);
-                broadcastActiveJobs();
-                broadcastFleetStatus();
+                broadcastFleetState();
               }, 1200);
             }
           }
