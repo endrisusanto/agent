@@ -62,6 +62,7 @@ export interface ActiveJobItem {
     failed: number;
   };
   zip_file?: string;
+  zip_files?: string[];
   recentLogs: string[];
 }
 

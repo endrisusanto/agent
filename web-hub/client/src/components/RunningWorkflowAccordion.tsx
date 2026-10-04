@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ActiveJobItem, DeviceItem } from '../hooks/useFleetWebSocket';
-import { ChevronDownIcon, ChevronUpIcon, StopIcon, TerminalIcon } from './Icons';
+import { ChevronDownIcon, ChevronUpIcon, StopIcon } from './Icons';
 
 interface RunningWorkflowAccordionProps {
   activeJobs: ActiveJobItem[];
@@ -21,14 +21,12 @@ const SingleWorkflowRunner: React.FC<{
   onCancelJob: (pcId: string, run_id: string) => void;
 }> = ({ job, devices, onCancelJob }) => {
   const [isParentOpen, setIsParentOpen] = useState<boolean>(true);
-  const [isGlobalOpen, setIsGlobalOpen] = useState<boolean>(true);
-  const [isAiWorkerOpen, setIsAiWorkerOpen] = useState<boolean>(false);
+  const [isAiWorkerOpen, setIsAiWorkerOpen] = useState<boolean>(true);
   const [isCtsOpen, setIsCtsOpen] = useState<boolean>(false);
   const [isGtsOpen, setIsGtsOpen] = useState<boolean>(false);
   const [isStsOpen, setIsStsOpen] = useState<boolean>(false);
 
   const [clearedLogs, setClearedLogs] = useState<Record<string, number>>({});
-  const globalLogRef = useRef<HTMLPreElement>(null);
   const aiWorkerLogRef = useRef<HTMLPreElement>(null);
   const ctsLogRef = useRef<HTMLPreElement>(null);
   const gtsLogRef = useRef<HTMLPreElement>(null);
@@ -47,7 +45,7 @@ const SingleWorkflowRunner: React.FC<{
     return Array.isArray(job.recentLogs) ? job.recentLogs : [];
   }, [job.recentLogs]);
 
-  // AI Worker Logs
+  // AI Worker Summary Logs
   const aiWorkerLogs = useMemo(() => {
     return rawLogs.filter((l) => {
       if (typeof l !== 'string') return false;
@@ -55,53 +53,84 @@ const SingleWorkflowRunner: React.FC<{
       return (
         lower.includes('[ai worker]') ||
         lower.includes('[runner]') ||
-        lower.includes('[bridge]') ||
         lower.includes('[roxml]') ||
         lower.includes('[prepare]') ||
+        lower.includes('[preflight]') ||
+        lower.includes('[bridge]') ||
         lower.includes('[hub]')
       );
     });
   }, [rawLogs]);
 
-  // CTS Logs
+  // CTS Logs (Filter strictly for CTS lines)
   const ctsLogs = useMemo(() => {
-    return rawLogs.filter((l) => {
-      if (typeof l !== 'string') return false;
-      const lower = l.toLowerCase();
-      return lower.includes('[cts]') || lower.includes('cts-tradefed') || lower.includes('cts-smr') || lower.includes('cts-sku');
-    });
+    return rawLogs
+      .filter((l) => {
+        if (typeof l !== 'string') return false;
+        return l.startsWith('[CTS]') || l.includes('cts-tradefed') || l.includes('cts-console') || l.includes('cts-smr') || l.includes('cts-sku');
+      })
+      .map((l) => (l.startsWith('[CTS] ') ? l.substring(6) : l.startsWith('[CTS]') ? l.substring(5) : l));
   }, [rawLogs]);
 
-  // GTS Logs
+  // GTS Logs (Filter strictly for GTS lines)
   const gtsLogs = useMemo(() => {
-    return rawLogs.filter((l) => {
-      if (typeof l !== 'string') return false;
-      const lower = l.toLowerCase();
-      return lower.includes('[gts]') || lower.includes('gts-tradefed') || lower.includes('gts_main') || lower.includes('gtsmr');
-    });
+    return rawLogs
+      .filter((l) => {
+        if (typeof l !== 'string') return false;
+        return l.startsWith('[GTS]') || l.includes('gts-tradefed') || l.includes('gts-console') || l.includes('gts_main') || l.includes('gtsmr');
+      })
+      .map((l) => (l.startsWith('[GTS] ') ? l.substring(6) : l.startsWith('[GTS]') ? l.substring(5) : l));
   }, [rawLogs]);
 
-  // STS Logs
+  // STS Logs (Filter strictly for STS lines)
   const stsLogs = useMemo(() => {
-    return rawLogs.filter((l) => {
-      if (typeof l !== 'string') return false;
-      const lower = l.toLowerCase();
-      return lower.includes('[sts]') || lower.includes('sts-tradefed') || lower.includes('sts-dynamic-plan');
-    });
+    return rawLogs
+      .filter((l) => {
+        if (typeof l !== 'string') return false;
+        return l.startsWith('[STS]') || l.includes('sts-tradefed') || l.includes('sts-console') || l.includes('sts-dynamic-plan');
+      })
+      .map((l) => (l.startsWith('[STS] ') ? l.substring(6) : l.startsWith('[STS]') ? l.substring(5) : l));
   }, [rawLogs]);
+
+  // Auto-open child accordion based on active suite or log arrival
+  useEffect(() => {
+    const currentSuite = (job.suite || '').toUpperCase();
+    if (currentSuite.includes('STS') && stsLogs.length > 0 && !isStsOpen) {
+      setIsStsOpen(true);
+    }
+    if (currentSuite.includes('CTS') && ctsLogs.length > 0 && !isCtsOpen) {
+      setIsCtsOpen(true);
+    }
+    if (currentSuite.includes('GTS') && gtsLogs.length > 0 && !isGtsOpen) {
+      setIsGtsOpen(true);
+    }
+  }, [job.suite, stsLogs.length, ctsLogs.length, gtsLogs.length]);
 
   // Auto-scroll
   useEffect(() => {
-    if (globalLogRef.current) globalLogRef.current.scrollTop = globalLogRef.current.scrollHeight;
     if (aiWorkerLogRef.current) aiWorkerLogRef.current.scrollTop = aiWorkerLogRef.current.scrollHeight;
     if (ctsLogRef.current) ctsLogRef.current.scrollTop = ctsLogRef.current.scrollHeight;
     if (gtsLogRef.current) gtsLogRef.current.scrollTop = gtsLogRef.current.scrollHeight;
     if (stsLogRef.current) stsLogRef.current.scrollTop = stsLogRef.current.scrollHeight;
-  }, [rawLogs.length]);
+  }, [aiWorkerLogs.length, ctsLogs.length, gtsLogs.length, stsLogs.length]);
 
   const handleClearSection = (key: string, length: number) => {
     setClearedLogs((prev) => ({ ...prev, [key]: length }));
   };
+
+  // Ready result ZIPs
+  const availableZips = useMemo(() => {
+    const zips: string[] = [];
+    if (Array.isArray(job.zip_files)) {
+      for (const z of job.zip_files) {
+        if (z && !zips.includes(z)) zips.push(z);
+      }
+    }
+    if (job.zip_file && !zips.includes(job.zip_file)) {
+      zips.push(job.zip_file);
+    }
+    return zips;
+  }, [job.zip_files, job.zip_file]);
 
   const renderConsoleScreen = (
     logs: string[],
@@ -113,26 +142,24 @@ const SingleWorkflowRunner: React.FC<{
     const visibleLines = logs.slice(offset);
 
     return (
-      <pre ref={ref} className="log-console-box">
+      <pre ref={ref} className="log-console-box" style={{ maxHeight: '240px', overflowY: 'auto' }}>
         {visibleLines.length > 0 ? (
           visibleLines.map((line, idx) => {
             let color = '#f0f6fc';
-            if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Failed') || line.includes('Exception')) {
+            if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Failed') || line.includes('Exception') || line.includes('error:')) {
               color = '#ff7b72';
-            } else if (line.includes('PASS') || line.includes('Passed') || line.includes('ready') || line.includes('Completed')) {
+            } else if (line.includes('PASS') || line.includes('Passed') || line.includes('ready') || line.includes('Completed') || line.includes('Test Done')) {
               color = '#7ee787';
-            } else if (line.includes('WARN') || line.includes('Warning') || line.includes('[roxml]')) {
+            } else if (line.includes('WARN') || line.includes('Warning') || line.includes('[roxml]') || line.includes('waiting device reconnect')) {
               color = '#e3b341';
             } else if (line.includes('[AI Worker]') || line.includes('[runner]') || line.includes('[Bridge]')) {
               color = '#79c0ff';
-            } else if (line.includes('[CTS]') || line.includes('[GTS]') || line.includes('[STS]')) {
-              color = '#d2a8ff';
             } else if (line.includes('[prepare]')) {
               color = '#56d364';
             }
 
             return (
-              <div key={idx} className="log-line" style={{ color }}>
+              <div key={idx} className="log-line" style={{ color, fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>
                 {line}
               </div>
             );
@@ -147,19 +174,19 @@ const SingleWorkflowRunner: React.FC<{
   };
 
   return (
-    <section className="laundry-table-card" style={{ marginBottom: '1rem', border: '1px solid var(--accent-primary)' }}>
+    <section className="laundry-table-card" style={{ marginBottom: '1rem', border: '1px solid var(--accent-primary)', borderRadius: '8px' }}>
       {/* Parent Accordion Header (Model + AP Version + Status) */}
       <div
         className="laundry-table-head"
         onClick={() => setIsParentOpen(!isParentOpen)}
-        style={{ cursor: 'pointer', backgroundColor: 'var(--bg-subtle)', padding: '0.875rem 1rem' }}
+        style={{ cursor: 'pointer', backgroundColor: 'var(--bg-subtle)', padding: '0.875rem 1rem', borderTopLeftRadius: '8px', borderTopRightRadius: '8px' }}
       >
         <div className="laundry-table-head-left" style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
           <span style={{ color: 'var(--text-muted)' }}>
             {isParentOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
           </span>
           <strong style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            WORKFLOW BERJALAN: {job.test_type || job.suite}
+            WORKFLOW: {job.test_type || job.suite}
           </strong>
           <span className="badge badge-running badge-xs">{targetModel}</span>
           <span className="badge badge-pc badge-xs mono-cell">{apVersion}</span>
@@ -189,122 +216,94 @@ const SingleWorkflowRunner: React.FC<{
       {/* Parent Accordion Body */}
       {isParentOpen && (
         <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          {/* 1. Global Terminal for this workflow */}
-          <section className="running-log-card" style={{ marginBottom: 0 }}>
-            <div className="running-log-head" onClick={() => setIsGlobalOpen(!isGlobalOpen)}>
-              <div className="running-log-head-title">
-                <TerminalIcon size={16} />
-                <span>GLOBAL RUNNING LOG</span>
-                <span className="badge badge-running badge-xs">{rawLogs.length} Lines</span>
+          {/* 0. Ready Result ZIPs Download Banner */}
+          {availableZips.length > 0 && (
+            <div
+              style={{
+                backgroundColor: 'rgba(56, 139, 253, 0.1)',
+                border: '1px solid rgba(56, 139, 253, 0.4)',
+                borderRadius: '6px',
+                padding: '0.75rem 1rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '0.625rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.125rem' }}>📦</span>
+                <div>
+                  <strong style={{ fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                    Hasil Test Suite Siap Diunduh ({availableZips.length} ZIP):
+                  </strong>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    File zip hasil retry Tradefed tersimpan di direktori Results
+                  </div>
+                </div>
               </div>
 
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {availableZips.map((zipName) => (
+                  <a
+                    key={zipName}
+                    href={`/api/results/download?run_id=${encodeURIComponent(job.run_id)}&file=${encodeURIComponent(zipName)}`}
+                    download={zipName}
+                    className="btn btn-success btn-xs"
+                    style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
+                    title={`Download ${zipName}`}
+                  >
+                    <span>💾</span>
+                    <span className="mono-cell">{zipName}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 1. AI Worker & Agentic Flow Summary (Top Section) */}
+          <section className="running-log-card" style={{ marginBottom: 0 }}>
+            <div
+              className="running-log-head"
+              style={{ backgroundColor: 'rgba(56, 139, 253, 0.08)', cursor: 'pointer' }}
+              onClick={() => setIsAiWorkerOpen(!isAiWorkerOpen)}
+            >
+              <div className="running-log-head-title">
+                <span>🤖 AI WORKER & AGENTIC FLOW SUMMARY</span>
+                <span className="badge badge-pc badge-xs">{aiWorkerLogs.length} Events</span>
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                 <button
                   className="log-clear-btn"
-                  onClick={() => handleClearSection('global', rawLogs.length)}
-                  title="Clear Log"
+                  onClick={() => handleClearSection('ai_worker', aiWorkerLogs.length)}
                 >
-                  Clear Log
+                  Clear
                 </button>
                 <span style={{ color: 'var(--text-muted)' }}>
-                  {isGlobalOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+                  {isAiWorkerOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
                 </span>
               </div>
             </div>
-
-            {isGlobalOpen && (
+            {isAiWorkerOpen && (
               <div className="running-log-body">
-                {renderConsoleScreen(rawLogs, globalLogRef, 'global', '⏳ Menunggu aliran log terminal...')}
+                {renderConsoleScreen(aiWorkerLogs, aiWorkerLogRef, 'ai_worker', 'Menunggu tahapan AI Worker...')}
               </div>
             )}
           </section>
 
-          {/* 2. Individual Child Accordions Grid */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {/* Child 1: AI Worker */}
+          {/* 2. Individual Suite Accordions Grid */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+            {/* Child 1: STS Tradefed Runner */}
             <section className="running-log-card" style={{ marginBottom: 0 }}>
-              <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsAiWorkerOpen(!isAiWorkerOpen)}>
-                <div className="running-log-head-title">
-                  <span>🤖 AI WORKER & ORCHESTRATION</span>
-                  <span className="badge badge-pc badge-xs">{aiWorkerLogs.length} Lines</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className="log-clear-btn"
-                    onClick={() => handleClearSection('ai_worker', aiWorkerLogs.length)}
-                  >
-                    Clear
-                  </button>
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isAiWorkerOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                  </span>
-                </div>
-              </div>
-              {isAiWorkerOpen && (
-                <div className="running-log-body">
-                  {renderConsoleScreen(aiWorkerLogs, aiWorkerLogRef, 'ai_worker', 'Belum ada log dari AI Worker / Device Preparation.')}
-                </div>
-              )}
-            </section>
-
-            {/* Child 2: CTS */}
-            <section className="running-log-card" style={{ marginBottom: 0 }}>
-              <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsCtsOpen(!isCtsOpen)}>
-                <div className="running-log-head-title">
-                  <span>🧪 CTS TRADEFED RUNNER</span>
-                  <span className="badge badge-unit badge-xs">{ctsLogs.length} Lines</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className="log-clear-btn"
-                    onClick={() => handleClearSection('cts', ctsLogs.length)}
-                  >
-                    Clear
-                  </button>
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isCtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                  </span>
-                </div>
-              </div>
-              {isCtsOpen && (
-                <div className="running-log-body">
-                  {renderConsoleScreen(ctsLogs, ctsLogRef, 'cts', 'Belum ada aktivitas eksekusi CTS suite.')}
-                </div>
-              )}
-            </section>
-
-            {/* Child 3: GTS */}
-            <section className="running-log-card" style={{ marginBottom: 0 }}>
-              <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsGtsOpen(!isGtsOpen)}>
-                <div className="running-log-head-title">
-                  <span>⚡ GTS TRADEFED RUNNER</span>
-                  <span className="badge badge-unit badge-xs">{gtsLogs.length} Lines</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className="log-clear-btn"
-                    onClick={() => handleClearSection('gts', gtsLogs.length)}
-                  >
-                    Clear
-                  </button>
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isGtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                  </span>
-                </div>
-              </div>
-              {isGtsOpen && (
-                <div className="running-log-body">
-                  {renderConsoleScreen(gtsLogs, gtsLogRef, 'gts', 'Belum ada aktivitas eksekusi GTS suite.')}
-                </div>
-              )}
-            </section>
-
-            {/* Child 4: STS */}
-            <section className="running-log-card" style={{ marginBottom: 0 }}>
-              <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsStsOpen(!isStsOpen)}>
+              <div
+                className="running-log-head"
+                style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'pointer' }}
+                onClick={() => setIsStsOpen(!isStsOpen)}
+              >
                 <div className="running-log-head-title">
                   <span>🛡️ STS TRADEFED RUNNER</span>
                   <span className="badge badge-unit badge-xs">{stsLogs.length} Lines</span>
+                  {stsLogs.length > 0 && <span className="badge badge-running badge-xs">ACTIVE</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                   <button
@@ -320,7 +319,69 @@ const SingleWorkflowRunner: React.FC<{
               </div>
               {isStsOpen && (
                 <div className="running-log-body">
-                  {renderConsoleScreen(stsLogs, stsLogRef, 'sts', 'Belum ada aktivitas eksekusi STS suite.')}
+                  {renderConsoleScreen(stsLogs, stsLogRef, 'sts', 'Belum ada output log konsol STS Tradefed.')}
+                </div>
+              )}
+            </section>
+
+            {/* Child 2: CTS Tradefed Runner */}
+            <section className="running-log-card" style={{ marginBottom: 0 }}>
+              <div
+                className="running-log-head"
+                style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'pointer' }}
+                onClick={() => setIsCtsOpen(!isCtsOpen)}
+              >
+                <div className="running-log-head-title">
+                  <span>🧪 CTS TRADEFED RUNNER</span>
+                  <span className="badge badge-unit badge-xs">{ctsLogs.length} Lines</span>
+                  {ctsLogs.length > 0 && <span className="badge badge-running badge-xs">ACTIVE</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className="log-clear-btn"
+                    onClick={() => handleClearSection('cts', ctsLogs.length)}
+                  >
+                    Clear
+                  </button>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    {isCtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+                  </span>
+                </div>
+              </div>
+              {isCtsOpen && (
+                <div className="running-log-body">
+                  {renderConsoleScreen(ctsLogs, ctsLogRef, 'cts', 'Belum ada output log konsol CTS Tradefed.')}
+                </div>
+              )}
+            </section>
+
+            {/* Child 3: GTS Tradefed Runner */}
+            <section className="running-log-card" style={{ marginBottom: 0 }}>
+              <div
+                className="running-log-head"
+                style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'pointer' }}
+                onClick={() => setIsGtsOpen(!isGtsOpen)}
+              >
+                <div className="running-log-head-title">
+                  <span>⚡ GTS TRADEFED RUNNER</span>
+                  <span className="badge badge-unit badge-xs">{gtsLogs.length} Lines</span>
+                  {gtsLogs.length > 0 && <span className="badge badge-running badge-xs">ACTIVE</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className="log-clear-btn"
+                    onClick={() => handleClearSection('gts', gtsLogs.length)}
+                  >
+                    Clear
+                  </button>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    {isGtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+                  </span>
+                </div>
+              </div>
+              {isGtsOpen && (
+                <div className="running-log-body">
+                  {renderConsoleScreen(gtsLogs, gtsLogRef, 'gts', 'Belum ada output log konsol GTS Tradefed.')}
                 </div>
               )}
             </section>
@@ -353,4 +414,3 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
     </div>
   );
 };
-

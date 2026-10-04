@@ -82,6 +82,7 @@ export interface ActiveJob {
   elapsed_secs: number;
   summary?: SuiteSummary;
   zip_file?: string;
+  zip_files?: string[];
   recentLogs: string[];
 }
 
@@ -182,6 +183,32 @@ app.get('/api/fleet/status', (_req, res) => {
     totalDevices: devices.size,
     activeJobsCount: activeJobs.size
   });
+});
+
+// REST: Result ZIP Download Endpoint
+app.get('/api/results/download', (req, res) => {
+  const file = (req.query.file as string) || '';
+  const run_id = (req.query.run_id as string) || '';
+  if (!file) return res.status(400).send('File parameter required');
+
+  const possiblePaths = [
+    file,
+    run_id ? path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', run_id, file) : '',
+    run_id ? path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', run_id, path.basename(file)) : '',
+    path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', file),
+    path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', path.basename(file)),
+    path.join('/cucian', file),
+    path.join('/home/endri-pro/Downloads/CUCIAN', file)
+  ].filter(Boolean);
+
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+        return res.download(p, path.basename(p));
+      }
+    } catch (_) {}
+  }
+  return res.status(404).send('Result file not found');
 });
 
 const server = http.createServer(app);
@@ -338,6 +365,22 @@ wssBridge.on('connection', (ws, req) => {
             if (job) {
               job.recentLogs.push(line);
               if (job.recentLogs.length > 500) job.recentLogs.shift();
+
+              if (line.includes('Result ZIP preserved:') || line.includes('Preserved retry result ZIP:') || line.includes('result ready:') || line.includes('Result zips:')) {
+                const parts = line.split(/Preserved retry result ZIP:|Result ZIP preserved:|result ready:/i);
+                if (parts[1]) {
+                  const rawPath = parts[1].trim();
+                  const filename = path.basename(rawPath);
+                  if (filename && filename.endsWith('.zip')) {
+                    if (!job.zip_files) job.zip_files = [];
+                    if (!job.zip_files.includes(filename)) {
+                      job.zip_files.push(filename);
+                      job.zip_file = job.zip_files[0];
+                      broadcastFleetState();
+                    }
+                  }
+                }
+              }
             }
             broadcastToUi({
               type: 'LOG_LINE',
@@ -363,7 +406,8 @@ wssBridge.on('connection', (ws, req) => {
               startedAt: Date.now(),
               devices: devList ? devList.split(',') : [],
               elapsed_secs: elapsed_secs || 0,
-              recentLogs: []
+              recentLogs: [],
+              zip_files: []
             };
             activeJobs.set(run_id, job);
           } else {
@@ -376,12 +420,15 @@ wssBridge.on('connection', (ws, req) => {
         }
 
         case 'RUN_FINISHED': {
-          const { run_id, summary, zip_file, exit_code } = msg;
+          const { run_id, summary, zip_file, zip_files, exit_code } = msg;
           const job = activeJobs.get(run_id);
           if (job) {
             job.status = exit_code === 0 ? 'Finished' : 'Failed';
             job.summary = summary;
-            job.zip_file = zip_file;
+            if (zip_files && Array.isArray(zip_files)) {
+              job.zip_files = zip_files;
+            }
+            job.zip_file = zip_file || (job.zip_files && job.zip_files[0]);
             jobHistory.push({ ...job });
             activeJobs.delete(run_id);
           }

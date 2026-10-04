@@ -34,7 +34,7 @@ pub struct RunOutcome {
     pub exit_code: i32,
     pub elapsed_secs: u64,
     pub result_dir: String,
-    pub zip_file: Option<String>,
+    pub zip_files: Vec<String>,
     pub total: u64,
     pub passed: u64,
     pub failed: u64,
@@ -48,7 +48,7 @@ struct DeviceInfoSources {
 
 struct LaundrySource {
     _temp: Arc<tempfile::TempDir>,
-    extract_root: PathBuf,
+    _extract_root: PathBuf,
     cts_results: Vec<PathBuf>,
     gts_results: Vec<PathBuf>,
     sts_results: Vec<PathBuf>,
@@ -75,12 +75,9 @@ pub fn execute_suite_run(
     }
 
     let start_time = Instant::now();
-    let _ = log_tx.send("[Bridge] ==================================================".to_string());
-    let _ = log_tx.send(format!("[Bridge] Initializing suite run: {}", payload.test_type));
-    let _ = log_tx.send(format!("[Bridge] Run ID: {}", run_id));
-    let _ = log_tx.send(format!("[Bridge] User devices: [{}]", payload.user_devices.join(", ")));
-    let _ = log_tx.send(format!("[Bridge] Userdebug devices: [{}]", payload.userdebug_devices.join(", ")));
-    let _ = log_tx.send("[Bridge] ==================================================".to_string());
+    let _ = log_tx.send(format!("[AI Worker] =================================================="));
+    let _ = log_tx.send(format!("[AI Worker] Starting shard 1/1: {} devices={}", payload.test_type, serials.join(",")));
+    let _ = log_tx.send(format!("[AI Worker] Run ID: {}", run_id));
 
     // 1. Mark devices as busy
     let mut busy_registry = read_busy_registry(auto_root);
@@ -107,8 +104,12 @@ pub fn execute_suite_run(
     let log_dir = session_dir.join("logs");
     let _ = fs::create_dir_all(&log_dir);
 
+    let _ = log_tx.send(format!("[AI Worker] Result directory: {}", session_dir.display()));
+
     let model = payload.target_model.clone().unwrap_or_else(|| "UnknownModel".to_string());
     let pda = "PDA".to_string();
+
+    let mut collected_zips = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let exit_code = match payload.test_type.as_str() {
         "Laundry" | "Laundry Normal" | "Laundry SKU" | "Laundry SMR" => {
@@ -119,9 +120,9 @@ pub fn execute_suite_run(
             });
 
             if has_sts {
-                run_laundry_smr_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx)?
+                run_laundry_smr_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
             } else {
-                run_laundry_normal_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx)?
+                run_laundry_normal_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
             }
         }
         "Cuci SMR" | "SMR" => {
@@ -139,6 +140,7 @@ pub fn execute_suite_run(
                 &payload.test_type,
                 &log_tx,
                 &status_tx,
+                &collected_zips,
             )?
         }
         "SKU" => {
@@ -156,6 +158,7 @@ pub fn execute_suite_run(
                 &payload.test_type,
                 &log_tx,
                 &status_tx,
+                &collected_zips,
             )?
         }
         "MR" | "Normal" => {
@@ -173,6 +176,7 @@ pub fn execute_suite_run(
                 &payload.test_type,
                 &log_tx,
                 &status_tx,
+                &collected_zips,
             )?
         }
         "STS" => {
@@ -193,10 +197,10 @@ pub fn execute_suite_run(
                 &payload.test_type,
                 &log_tx,
                 &status_tx,
+                &collected_zips,
             )?
         }
         _ => {
-            // Default generic suite runner fallback
             run_generic_suite_flow(auto_root, &session_dir, &log_dir, payload, &run_id, &log_tx, &status_tx)?
         }
     };
@@ -210,14 +214,16 @@ pub fn execute_suite_run(
     }
     let _ = write_busy_registry(auto_root, &busy_registry);
 
-    let _ = log_tx.send(format!("[Bridge] Run {} finished with exit code {}", run_id, exit_code));
+    let zips_list = collected_zips.lock().unwrap().clone();
+    let _ = log_tx.send(format!("[AI Worker] Completed with exit={exit_code}. Result zips: [{}]", zips_list.join(", ")));
+    let _ = log_tx.send(format!("[AI Worker] Finished exit={exit_code} result={}", session_dir.display()));
     let _ = status_tx.send((payload.test_type.clone(), if exit_code == 0 { "Test Done".to_string() } else { "Failed".to_string() }, elapsed));
 
     Ok(RunOutcome {
         exit_code,
         elapsed_secs: elapsed,
         result_dir: session_dir.to_string_lossy().to_string(),
-        zip_file: None,
+        zip_files: zips_list,
         total: 100,
         passed: if exit_code == 0 { 100 } else { 0 },
         failed: if exit_code == 0 { 0 } else { 1 },
@@ -242,6 +248,149 @@ fn sanitize_name(name: &str) -> String {
 
 fn serial_args(devices: &[String]) -> String {
     devices.iter().map(|s| format!(" -s {s}")).collect::<Vec<_>>().join("")
+}
+
+// -------------------------------------------------------------------------------------------------
+// Result Snapshot & Artifact Management (Matching AUTO Algorithm)
+// -------------------------------------------------------------------------------------------------
+
+struct ResultSnapshot {
+    zips: HashMap<PathBuf, SystemTime>,
+}
+
+impl ResultSnapshot {
+    fn capture(dir: &Path) -> Self {
+        let mut zips = HashMap::new();
+        if dir.is_dir() {
+            for entry in WalkDir::new(dir).into_iter().flatten() {
+                if entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("zip") {
+                    if let Ok(modified) = fs::metadata(entry.path()).and_then(|m| m.modified()) {
+                        zips.insert(entry.path().to_path_buf(), modified);
+                    }
+                }
+            }
+        }
+        Self { zips }
+    }
+
+    fn newest_zip(&self, dir: &Path, since: SystemTime) -> Option<PathBuf> {
+        let threshold = since.checked_sub(Duration::from_secs(5)).unwrap_or(since);
+        let mut newest: Option<(SystemTime, PathBuf)> = None;
+        if dir.is_dir() {
+            for entry in WalkDir::new(dir).into_iter().flatten() {
+                if !entry.file_type().is_file() || entry.path().extension().and_then(|s| s.to_str()) != Some("zip") {
+                    continue;
+                }
+                let path = entry.path().to_path_buf();
+                let modified = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+                if modified < threshold {
+                    continue;
+                }
+                if self.zips.get(&path).is_some_and(|prev| *prev == modified) {
+                    continue;
+                }
+                if let Some((best_time, _)) = &newest {
+                    if modified > *best_time {
+                        newest = Some((modified, path));
+                    }
+                } else {
+                    newest = Some((modified, path));
+                }
+            }
+        }
+        newest.map(|(_, p)| p)
+    }
+}
+
+fn copy_laundry_retry_artifact(
+    session_dir: &Path,
+    suite: &str,
+    suite_workspace: &Path,
+    result_dir: &Path,
+    snapshot: &ResultSnapshot,
+    started: SystemTime,
+    model: &str,
+    pda: &str,
+    devices: &[String],
+    index: usize,
+    log_tx: &mpsc::UnboundedSender<String>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
+) -> Result<String, String> {
+    let _ = log_tx.send(format!("[AI Worker] {suite}: copying retry artifact for {}", result_dir.display()));
+    let zip = snapshot.newest_zip(&suite_workspace.join("results"), started)
+        .or_else(|| {
+            // Find any zip in result_dir
+            for entry in WalkDir::new(result_dir).into_iter().flatten() {
+                if entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("zip") {
+                    return Some(entry.into_path());
+                }
+            }
+            let sibling = result_dir.with_extension("zip");
+            if sibling.is_file() { Some(sibling) } else { None }
+        });
+
+    let Some(zip_path) = zip else {
+        let _ = log_tx.send(format!("[{suite}] No new zip detected after retry in {}", result_dir.display()));
+        return Ok(String::new());
+    };
+
+    let result_name = result_dir.file_name().and_then(|n| n.to_str()).unwrap_or("result");
+    let dst_filename = format!(
+        "{}_retry{}_{}_{}_{}_{}.zip",
+        suite,
+        index,
+        sanitize_name(model),
+        sanitize_name(pda),
+        sanitize_name(&devices.join("_")),
+        sanitize_name(result_name)
+    );
+    let dst_path = session_dir.join(&dst_filename);
+    let _ = fs::copy(&zip_path, &dst_path);
+    let _ = log_tx.send(format!("[AI Worker] Preserved retry result ZIP: {}", dst_path.display()));
+    {
+        let mut zips = collected_zips.lock().unwrap();
+        if !zips.contains(&dst_filename) {
+            zips.push(dst_filename.clone());
+        }
+    }
+    Ok(dst_filename)
+}
+
+fn copy_suite_result(
+    session_dir: &Path,
+    suite: &str,
+    suite_workspace: &Path,
+    devices: &[String],
+    model: &str,
+    pda: &str,
+    snapshot: &ResultSnapshot,
+    started: SystemTime,
+    log_tx: &mpsc::UnboundedSender<String>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
+) -> Result<String, String> {
+    let _ = log_tx.send(format!("[AI Worker] {suite}: copying result for [{}]", devices.join(",")));
+    let results = suite_workspace.join("results");
+    let zip = snapshot.newest_zip(&results, started);
+    if let Some(zip_path) = zip {
+        let dst_filename = format!(
+            "{}_{}_{}_{}.zip",
+            suite,
+            sanitize_name(model),
+            sanitize_name(pda),
+            sanitize_name(&devices.join("_"))
+        );
+        let dst_path = session_dir.join(&dst_filename);
+        let _ = fs::copy(&zip_path, &dst_path);
+        let _ = log_tx.send(format!("[AI Worker] Result ZIP preserved: {}", dst_path.display()));
+        {
+            let mut zips = collected_zips.lock().unwrap();
+            if !zips.contains(&dst_filename) {
+                zips.push(dst_filename.clone());
+            }
+        }
+        return Ok(dst_filename);
+    }
+    Ok(String::new())
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -342,7 +491,6 @@ fn resolve_sts_root(root: &Path, month: &str, android: &str) -> Result<PathBuf, 
     if path.is_dir() {
         Ok(path)
     } else {
-        // Fallback: search any android-sts under STS
         let base_sts = root.join("STS");
         for entry in WalkDir::new(base_sts).into_iter().flatten() {
             if entry.file_type().is_dir() && entry.file_name() == "android-sts" {
@@ -449,7 +597,7 @@ fn run_suite_process(
 ) -> Result<i32, String> {
     let devices_text = devices.join(",");
     let _ = status_tx.send((suite.to_string(), "Starting".to_string(), 0));
-    let _ = log_tx.send(format!("[runner] {suite}: launching tradefed for [{devices_text}]"));
+    let _ = log_tx.send(format!("[AI Worker] {suite}: launching tradefed for [{devices_text}]"));
     let _ = log_tx.send(format!("[{suite}] {suite_command}"));
 
     let executable_name = executable
@@ -486,7 +634,7 @@ fn run_suite_process(
         let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
         map.insert(run_id.to_string(), pid);
     }
-    let _ = log_tx.send(format!("[{suite}] started pid={pid}"));
+    let _ = log_tx.send(format!("[AI Worker] {suite}: started pid={pid}"));
 
     if via_pipe {
         if let Some(mut stdin) = child.stdin.take() {
@@ -499,11 +647,12 @@ fn run_suite_process(
     }
 
     let log_tx_err = log_tx.clone();
+    let suite_err_tag = suite.to_string();
     if let Some(stderr) = child.stderr.take() {
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().flatten() {
-                let _ = log_tx_err.send(format!("[stderr] {line}"));
+                let _ = log_tx_err.send(format!("[{suite_err_tag}] [stderr] {line}"));
             }
         });
     }
@@ -513,12 +662,13 @@ fn run_suite_process(
     let suite_name = suite.to_string();
     let start_inst = Instant::now();
     if let Some(stdout) = child.stdout.take() {
+        let suite_out_tag = suite_name.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().flatten() {
                 let elapsed = start_inst.elapsed().as_secs();
                 let _ = status_tx_clone.send((suite_name.clone(), "Running".to_string(), elapsed));
-                let _ = log_tx_out.send(line);
+                let _ = log_tx_out.send(format!("[{suite_out_tag}] {line}"));
             }
         });
     }
@@ -530,7 +680,7 @@ fn run_suite_process(
     }
 
     let code = status.code().unwrap_or(0);
-    let _ = log_tx.send(format!("[{suite}] Process exited with code {code}"));
+    let _ = log_tx.send(format!("[AI Worker] {suite}: tradefed finished with code {code}"));
     Ok(code)
 }
 
@@ -621,14 +771,14 @@ fn run_laundry_initial_gts(
     )?;
 
     if exit_code != 0 {
-        let _ = log_tx.send("[runner] Initial GTS returned non-zero; trying to collect deviceinfo anyway.".to_string());
+        let _ = log_tx.send("[AI Worker] Initial GTS returned non-zero; trying to collect deviceinfo anyway.".to_string());
     }
 
     let property_deviceinfo = latest_property_deviceinfo(&gts_workspace.join("results"))
         .ok_or_else(|| "PropertyDeviceInfo.deviceinfo.json not found after initial GTS".to_string())?;
     let client_id_deviceinfo = latest_client_id_deviceinfo(&gts_root.join("results"));
 
-    let _ = log_tx.send(format!("[runner] Deviceinfo source: {}", property_deviceinfo.display()));
+    let _ = log_tx.send(format!("[AI Worker] Deviceinfo source: {}", property_deviceinfo.display()));
     let stable_property = session_dir.join(format!(
         "PropertyDeviceInfo_{}_{}.deviceinfo.json",
         sanitize_name(&devices.join("_")),
@@ -646,9 +796,9 @@ fn run_laundry_initial_gts(
         fs::copy(&source, &target).ok().map(|_| target)
     });
 
-    let _ = log_tx.send(format!("[runner] Deviceinfo preserved: {}", stable_property.display()));
+    let _ = log_tx.send(format!("[AI Worker] Deviceinfo preserved: {}", stable_property.display()));
     if let Some(ref path) = stable_client_id {
-        let _ = log_tx.send(format!("[runner] ClientId deviceinfo preserved: {}", path.display()));
+        let _ = log_tx.send(format!("[AI Worker] ClientId deviceinfo preserved: {}", path.display()));
     }
 
     Ok(DeviceInfoSources { property: stable_property, client_id: stable_client_id })
@@ -701,7 +851,7 @@ fn run_tradefed_console_command(
         let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
         map.insert(run_id.to_string(), pid);
     }
-    let _ = log_tx.send(format!("[{suite}] console pid={pid} command={console_command}"));
+    let _ = log_tx.send(format!("[AI Worker] {suite}: console pid={pid} command={console_command}"));
 
     let output_str = if let Some(stdout) = child.stdout.take() {
         let reader = BufReader::new(stdout);
@@ -731,16 +881,16 @@ fn resolve_retry_session_id(
     run_id: &str,
     log_tx: &mpsc::UnboundedSender<String>,
 ) -> Result<String, String> {
-    let _ = log_tx.send(format!("[runner] {suite}: resolving retry session for {result_dir_name}"));
+    let _ = log_tx.send(format!("[AI Worker] {suite}: resolving retry session for {result_dir_name}"));
     let mut last_output = String::new();
     for attempt in 1..=5 {
         let output = run_tradefed_console_command(suite, executable, "l r", log_file, 45, run_id, log_tx)?;
         if let Some(session_id) = parse_retry_session_id(&output, result_dir_name) {
-            let _ = log_tx.send(format!("[runner] {suite}: matched retry session {session_id} for {result_dir_name}"));
+            let _ = log_tx.send(format!("[AI Worker] {suite}: matched retry session {session_id} for {result_dir_name}"));
             return Ok(session_id);
         }
         last_output = output;
-        let _ = log_tx.send(format!("[runner] {suite}: retry session not visible yet for {result_dir_name} (attempt {attempt}/5)."));
+        let _ = log_tx.send(format!("[AI Worker] {suite}: retry session not visible yet for {result_dir_name} (attempt {attempt}/5)."));
         std::thread::sleep(Duration::from_secs(1));
     }
     Err(format!(
@@ -751,18 +901,20 @@ fn resolve_retry_session_id(
 
 fn run_laundry_retries(
     root: &Path,
-    _session_dir: &Path,
+    session_dir: &Path,
     log_dir: &Path,
     suite: &str,
     devices: &[String],
     source_results: &[PathBuf],
     replacement_deviceinfos: Option<&DeviceInfoSources>,
     timeout_secs: u64,
-    _model: &str,
+    model: &str,
+    pda: &str,
     run_id: &str,
     test_type: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<Vec<i32>, String> {
     let mut codes = Vec::new();
     for (index, source) in source_results.iter().enumerate() {
@@ -784,7 +936,7 @@ fn run_laundry_retries(
 
         let timestamp = format!("{}_{}", timestamp_compact(), index);
         let target = results_dir.join(&timestamp);
-        let _ = log_tx.send(format!("[runner] {suite}: staging result {} -> {}", source.display(), target.display()));
+        let _ = log_tx.send(format!("[AI Worker] {suite}: staging result {} -> {}", source.display(), target.display()));
         copy_dir_recursive(source, &target)
             .map_err(|err| format!("Cannot stage {} to {}: {err}", source.display(), target.display()))?;
         cleanup_deviceinfo_backups(&target);
@@ -792,11 +944,11 @@ fn run_laundry_retries(
         if let Some(replacements) = replacement_deviceinfos {
             if let Some(target_info) = property_deviceinfo_in_result(&target) {
                 let _ = fs::copy(&replacements.property, &target_info);
-                let _ = log_tx.send(format!("[runner] {suite}: replaced {} (PropertyDeviceInfo)", target_info.display()));
+                let _ = log_tx.send(format!("[AI Worker] {suite}: replaced {} (PropertyDeviceInfo)", target_info.display()));
             }
             if let (Some(client_src), Some(target_info)) = (&replacements.client_id, client_id_deviceinfo_in_result(&target)) {
                 let _ = fs::copy(client_src, &target_info);
-                let _ = log_tx.send(format!("[runner] {suite}: replaced {} (ClientIdDeviceInfo)", target_info.display()));
+                let _ = log_tx.send(format!("[AI Worker] {suite}: replaced {} (ClientIdDeviceInfo)", target_info.display()));
             }
             cleanup_deviceinfo_backups(&target);
         }
@@ -820,8 +972,11 @@ fn run_laundry_retries(
             devices.len(),
             serial_args(devices)
         );
-        let _ = log_tx.send(format!("[runner] {suite}: retry session={session_id} result={}", target.display()));
+        let _ = log_tx.send(format!("[AI Worker] {suite}: retry session={session_id} result={}", target.display()));
         let log_file = log_dir.join(format!("laundry_retry_{}_{}_{}devs.log", suite.to_lowercase(), index + 1, devices.len()));
+
+        let snapshot = ResultSnapshot::capture(&results_dir);
+        let started = SystemTime::now();
 
         let code = run_suite_process(
             suite,
@@ -836,6 +991,23 @@ fn run_laundry_retries(
             log_tx,
             status_tx,
         )?;
+
+        // Copy retry artifact zip
+        let _ = copy_laundry_retry_artifact(
+            session_dir,
+            suite,
+            &suite_workspace,
+            &target,
+            &snapshot,
+            started,
+            model,
+            pda,
+            devices,
+            index + 1,
+            log_tx,
+            collected_zips,
+        );
+
         codes.push(code);
     }
     Ok(codes)
@@ -911,7 +1083,7 @@ fn prepare_laundry_source(
     let resolved = resolve_zip_path(zip_str)
         .ok_or_else(|| format!("Laundry zip file not found: {zip_str}"))?;
 
-    let _ = log_tx.send(format!("[runner] Laundry zip selected: {}", resolved.display()));
+    let _ = log_tx.send(format!("[AI Worker] Laundry zip selected: {}", resolved.display()));
     let temp = Arc::new(
         tempfile::Builder::new()
             .prefix("gba-laundry-")
@@ -919,17 +1091,17 @@ fn prepare_laundry_source(
             .map_err(|err| format!("Cannot create laundry temp dir: {err}"))?,
     );
 
-    let _ = log_tx.send(format!("[runner] Extracting zip to {}", temp.path().display()));
+    let _ = log_tx.send(format!("[AI Worker] Extracting zip to {}", temp.path().display()));
     let file = File::open(&resolved).map_err(|e| format!("Cannot open zip: {e}"))?;
     let mut archive = ZipArchive::new(BufReader::new(file)).map_err(|e| format!("Invalid zip: {e}"))?;
     archive.extract(temp.path()).map_err(|e| format!("Cannot extract zip: {e}"))?;
 
-    let _ = log_tx.send("[runner] Extracting nested zip files...".to_string());
+    let _ = log_tx.send("[AI Worker] Checking and extracting any nested zip files...".to_string());
     let _ = extract_nested_zips(temp.path());
 
     let (mut cts_results, mut gts_results, mut sts_results) = scan_laundry_results(temp.path());
     let _ = log_tx.send(format!(
-        "[runner] Scanned laundry results: CTS={} GTS={} STS={}",
+        "[AI Worker] Scanned laundry results: CTS={} GTS={} STS={}",
         cts_results.len(),
         gts_results.len(),
         sts_results.len()
@@ -946,16 +1118,14 @@ fn prepare_laundry_source(
         gts_results.retain(filter_fn);
         sts_results.retain(filter_fn);
         let _ = log_tx.send(format!(
-            "[runner] Filtered laundry results: CTS={} GTS={} STS={}",
-            cts_results.len(),
-            gts_results.len(),
-            sts_results.len()
+            "[AI Worker] Custom laundry selection applied: {} result(s)",
+            cts_results.len() + gts_results.len() + sts_results.len()
         ));
     }
 
     Ok(LaundrySource {
         _temp: temp.clone(),
-        extract_root: temp.path().to_path_buf(),
+        _extract_root: temp.path().to_path_buf(),
         cts_results,
         gts_results,
         sts_results,
@@ -972,10 +1142,11 @@ fn run_laundry_smr_flow(
     log_dir: &Path,
     payload: &RunSuitePayload,
     model: &str,
-    _pda: &str,
+    pda: &str,
     run_id: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
     let source = prepare_laundry_source(payload, session_dir, log_tx)?;
     let has_cts_or_gts = !source.cts_results.is_empty() || !source.gts_results.is_empty();
@@ -995,7 +1166,7 @@ fn run_laundry_smr_flow(
 
     // 1. If STS results & userdebug devices exist: spawn STS retry thread immediately!
     let sts_handle = if !payload.userdebug_devices.is_empty() && !source.sts_results.is_empty() {
-        let _ = log_tx.send("[runner] Laundry (SMR): STS retry starts immediately on userdebug devices.".to_string());
+        let _ = log_tx.send("[AI Worker] Laundry (SMR): STS retry starts immediately on userdebug devices.".to_string());
         let root_sts = auto_root.to_path_buf();
         let session_sts = session_dir.to_path_buf();
         let log_sts = log_dir.to_path_buf();
@@ -1003,10 +1174,12 @@ fn run_laundry_smr_flow(
         let results_sts = source.sts_results.clone();
         let timeout_sts = payload.timeout_secs;
         let model_sts = model.to_string();
+        let pda_sts = pda.to_string();
         let run_id_sts = run_id.to_string();
         let test_type_sts = payload.test_type.clone();
         let log_tx_sts = log_tx.clone();
         let stat_tx_sts = status_tx.clone();
+        let zips_sts = Arc::clone(collected_zips);
 
         Some(std::thread::spawn(move || {
             run_laundry_retries(
@@ -1019,10 +1192,12 @@ fn run_laundry_smr_flow(
                 None,
                 timeout_sts,
                 &model_sts,
+                &pda_sts,
                 &run_id_sts,
                 &test_type_sts,
                 &log_tx_sts,
                 &stat_tx_sts,
+                &zips_sts,
             )
         }))
     } else {
@@ -1031,7 +1206,7 @@ fn run_laundry_smr_flow(
 
     // 2. If CTS/GTS devices exist: Initial GTS for Property DeviceInfo -> CTS Retry -> GTS Retry
     if !cts_gts_devices.is_empty() && has_cts_or_gts {
-        let _ = log_tx.send("[runner] Laundry (SMR): initial GTS gtsmr run.".to_string());
+        let _ = log_tx.send("[AI Worker] Laundry (SMR): initial GTS gtsmr run.".to_string());
         let deviceinfo = run_laundry_initial_gts(
             auto_root,
             session_dir,
@@ -1047,7 +1222,7 @@ fn run_laundry_smr_flow(
         )?;
 
         if !source.cts_results.is_empty() {
-            let _ = log_tx.send(format!("[runner] CTS: {} result(s) queued for retry.", source.cts_results.len()));
+            let _ = log_tx.send(format!("[AI Worker] CTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.cts_results.len()));
             let cts_codes = run_laundry_retries(
                 auto_root,
                 session_dir,
@@ -1058,16 +1233,18 @@ fn run_laundry_smr_flow(
                 Some(&deviceinfo),
                 payload.timeout_secs,
                 model,
+                pda,
                 run_id,
                 &payload.test_type,
                 log_tx,
                 status_tx,
+                collected_zips,
             )?;
             exit_codes.extend(cts_codes);
         }
 
         if !source.gts_results.is_empty() {
-            let _ = log_tx.send(format!("[runner] GTS: {} result(s) queued for retry.", source.gts_results.len()));
+            let _ = log_tx.send(format!("[AI Worker] GTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.gts_results.len()));
             let gts_codes = run_laundry_retries(
                 auto_root,
                 session_dir,
@@ -1078,15 +1255,17 @@ fn run_laundry_smr_flow(
                 Some(&deviceinfo),
                 payload.timeout_secs,
                 model,
+                pda,
                 run_id,
                 &payload.test_type,
                 log_tx,
                 status_tx,
+                collected_zips,
             )?;
             exit_codes.extend(gts_codes);
         }
     } else if !has_cts_or_gts {
-        let _ = log_tx.send("[runner] Laundry (SMR): STS-only selected, skipping GTS property/gtsmr process.".to_string());
+        let _ = log_tx.send("[AI Worker] Laundry (SMR): STS-only selected, skipping GTS property/gtsmr process.".to_string());
     }
 
     // 3. Await STS thread if running
@@ -1094,7 +1273,7 @@ fn run_laundry_smr_flow(
         match handle.join() {
             Ok(Ok(sts_codes)) => exit_codes.extend(sts_codes),
             Ok(Err(e)) => {
-                let _ = log_tx.send(format!("[runner] STS retry error: {e}"));
+                let _ = log_tx.send(format!("[AI Worker] STS retry error: {e}"));
                 exit_codes.push(1);
             }
             Err(_) => exit_codes.push(1),
@@ -1110,10 +1289,11 @@ fn run_laundry_normal_flow(
     log_dir: &Path,
     payload: &RunSuitePayload,
     model: &str,
-    _pda: &str,
+    pda: &str,
     run_id: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
     let mut all_devices = payload.user_devices.clone();
     for d in &payload.userdebug_devices {
@@ -1124,7 +1304,7 @@ fn run_laundry_normal_flow(
     let devices = if !all_devices.is_empty() { &all_devices } else { &payload.user_devices };
     let source = prepare_laundry_source(payload, session_dir, log_tx)?;
 
-    let _ = log_tx.send("[runner] Laundry (Normal/SKU): initial GTS property run.".to_string());
+    let _ = log_tx.send("[AI Worker] Laundry (Normal/SKU): initial GTS property run.".to_string());
     let deviceinfo = run_laundry_initial_gts(
         auto_root,
         session_dir,
@@ -1141,7 +1321,7 @@ fn run_laundry_normal_flow(
 
     let mut exit_codes = Vec::new();
     if !source.cts_results.is_empty() {
-        let _ = log_tx.send(format!("[runner] CTS: {} result(s) queued for retry.", source.cts_results.len()));
+        let _ = log_tx.send(format!("[AI Worker] CTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.cts_results.len()));
         let cts_codes = run_laundry_retries(
             auto_root,
             session_dir,
@@ -1152,16 +1332,18 @@ fn run_laundry_normal_flow(
             Some(&deviceinfo),
             payload.timeout_secs,
             model,
+            pda,
             run_id,
             &payload.test_type,
             log_tx,
             status_tx,
+            collected_zips,
         )?;
         exit_codes.extend(cts_codes);
     }
 
     if !source.gts_results.is_empty() {
-        let _ = log_tx.send(format!("[runner] GTS: {} result(s) queued for retry.", source.gts_results.len()));
+        let _ = log_tx.send(format!("[AI Worker] GTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.gts_results.len()));
         let gts_codes = run_laundry_retries(
             auto_root,
             session_dir,
@@ -1172,10 +1354,12 @@ fn run_laundry_normal_flow(
             Some(&deviceinfo),
             payload.timeout_secs,
             model,
+            pda,
             run_id,
             &payload.test_type,
             log_tx,
             status_tx,
+            collected_zips,
         )?;
         exit_codes.extend(gts_codes);
     }
@@ -1185,18 +1369,19 @@ fn run_laundry_normal_flow(
 
 fn run_cts_then_gts_flow(
     auto_root: &Path,
-    _session_dir: &Path,
+    session_dir: &Path,
     log_dir: &Path,
     devices: &[String],
     cts_subplan: &str,
     gts_command: &str,
     timeout_secs: u64,
     model: &str,
-    _pda: &str,
+    pda: &str,
     run_id: &str,
     test_type: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
     let cts_root = suite_root_for_device(auto_root, "CTS", devices)?;
     let cts_workspace = suite_workspace(auto_root, &cts_root, run_id)?;
@@ -1211,7 +1396,10 @@ fn run_cts_then_gts_flow(
         serial_args(devices)
     );
     let cts_log = log_dir.join(format!("cts_{}_{}devs.log", sanitize_name(model), devices.len()));
-    let _ = log_tx.send(format!("[runner] CTS: starting subplan {cts_subplan} on [{}]", devices.join(",")));
+    let _ = log_tx.send(format!("[AI Worker] CTS: starting subplan {cts_subplan} on [{}]", devices.join(",")));
+
+    let cts_snapshot = ResultSnapshot::capture(&cts_workspace.join("results"));
+    let cts_started = SystemTime::now();
 
     let cts_code = run_suite_process(
         "CTS",
@@ -1227,8 +1415,21 @@ fn run_cts_then_gts_flow(
         status_tx,
     )?;
 
+    let _ = copy_suite_result(
+        session_dir,
+        "CTS",
+        &cts_workspace,
+        devices,
+        model,
+        pda,
+        &cts_snapshot,
+        cts_started,
+        log_tx,
+        collected_zips,
+    );
+
     if cts_code != 0 {
-        let _ = log_tx.send("[gts] CTS returned non-zero; GTS will still be attempted.".to_string());
+        let _ = log_tx.send("[AI Worker] CTS returned non-zero; GTS will still be attempted.".to_string());
     }
 
     let gts_root = suite_root_for_device(auto_root, "GTS", devices)?;
@@ -1244,7 +1445,10 @@ fn run_cts_then_gts_flow(
         serial_args(devices)
     );
     let gts_log = log_dir.join(format!("gts_{}_{}devs.log", sanitize_name(model), devices.len()));
-    let _ = log_tx.send(format!("[runner] GTS: starting command '{gts_command}' on [{}]", devices.join(",")));
+    let _ = log_tx.send(format!("[AI Worker] GTS: starting command '{gts_command}' on [{}]", devices.join(",")));
+
+    let gts_snapshot = ResultSnapshot::capture(&gts_workspace.join("results"));
+    let gts_started = SystemTime::now();
 
     let gts_code = run_suite_process(
         "GTS",
@@ -1260,21 +1464,35 @@ fn run_cts_then_gts_flow(
         status_tx,
     )?;
 
+    let _ = copy_suite_result(
+        session_dir,
+        "GTS",
+        &gts_workspace,
+        devices,
+        model,
+        pda,
+        &gts_snapshot,
+        gts_started,
+        log_tx,
+        collected_zips,
+    );
+
     Ok(if cts_code == 0 && gts_code == 0 { 0 } else { 1 })
 }
 
 fn run_sts_flow(
     auto_root: &Path,
-    _session_dir: &Path,
+    session_dir: &Path,
     log_dir: &Path,
     devices: &[String],
     timeout_secs: u64,
     model: &str,
-    _pda: &str,
+    pda: &str,
     run_id: &str,
     test_type: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
     let sts_root = suite_root_for_device(auto_root, "STS", devices)?;
     let sts_workspace = suite_workspace(auto_root, &sts_root, run_id)?;
@@ -1296,9 +1514,12 @@ fn run_sts_flow(
         serial_args(devices)
     );
     let sts_log = log_dir.join(format!("sts_{}_{}devs.log", sanitize_name(model), devices.len()));
-    let _ = log_tx.send(format!("[runner] STS: starting {} on [{}]", sts_plan, devices.join(",")));
+    let _ = log_tx.send(format!("[AI Worker] STS: starting {} on [{}]", sts_plan, devices.join(",")));
 
-    run_suite_process(
+    let sts_snapshot = ResultSnapshot::capture(&sts_workspace.join("results"));
+    let sts_started = SystemTime::now();
+
+    let code = run_suite_process(
         "STS",
         devices,
         &sts_exe,
@@ -1310,7 +1531,22 @@ fn run_sts_flow(
         test_type,
         log_tx,
         status_tx,
-    )
+    )?;
+
+    let _ = copy_suite_result(
+        session_dir,
+        "STS",
+        &sts_workspace,
+        devices,
+        model,
+        pda,
+        &sts_snapshot,
+        sts_started,
+        log_tx,
+        collected_zips,
+    );
+
+    Ok(code)
 }
 
 fn run_generic_suite_flow(

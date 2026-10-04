@@ -239,18 +239,19 @@ async fn run_bridge_worker(state: AppState) {
                                                                     log_tx,
                                                                     stat_tx,
                                                                 );
-                                                                let exit_code = match &outcome {
-                                                                    Ok(o) => o.exit_code,
-                                                                    Err(_) => 1,
+                                                                let (exit_code, zip_files, first_zip) = match &outcome {
+                                                                    Ok(o) => (o.exit_code, o.zip_files.clone(), o.zip_files.first().cloned()),
+                                                                    Err(_) => (1, Vec::new(), None),
                                                                 };
                                                                 let _ = scan_tx_fin.send(Message::Text(json!({
                                                                     "type": "RUN_FINISHED",
                                                                     "run_id": run_id_fin,
                                                                     "exit_code": exit_code,
                                                                     "summary": null,
-                                                                    "zip_file": null
+                                                                    "zip_file": first_zip,
+                                                                    "zip_files": zip_files
                                                                 }).to_string()));
-                                                                log_msg(&state_clone, format!("[Bridge] Run completed: {:?}", outcome.as_ref().map(|o| o.exit_code)));
+                                                                log_msg(&state_clone, format!("[Bridge] Run completed: exit_code={exit_code}, zips={:?}", zip_files));
                                                             });
                                                         }
                                                         Err(e) => {
