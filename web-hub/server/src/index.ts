@@ -255,11 +255,15 @@ function broadcastToUi(data: object) {
 
 // Send command to specific Bridge PC
 function sendToBridge(pcId: string, message: object): boolean {
-  const bridge = bridges.get(pcId);
+  let bridge = bridges.get(pcId);
+  if (!bridge && bridges.size > 0) {
+    bridge = Array.from(bridges.values())[0];
+  }
   if (bridge && bridge.ws && bridge.ws.readyState === WebSocket.OPEN) {
     bridge.ws.send(JSON.stringify(message));
     return true;
   }
+  console.warn(`[Hub] Unable to send message to bridge. Target: ${pcId}, Online bridges: ${Array.from(bridges.keys()).join(', ') || 'none'}`);
   return false;
 }
 
@@ -438,8 +442,34 @@ wssUi.on('connection', (ws) => {
       switch (msg.type) {
         case 'EXEC_RUN_SUITE': {
           const { pcId, payload } = msg;
-          if (pcId && sendToBridge(pcId, { type: 'CMD_RUN_SUITE', payload })) {
-            console.log(`[Hub] Dispatched CMD_RUN_SUITE to ${pcId}`);
+          if (payload) {
+            if (!payload.run_id) {
+              payload.run_id = `run-${Date.now()}`;
+            }
+            const run_id = payload.run_id;
+            const targetDevs = [...(payload.user_devices || []), ...(payload.userdebug_devices || [])];
+            const targetPcId = pcId || Array.from(bridges.keys())[0] || 'LOCAL';
+
+            let job = activeJobs.get(run_id);
+            if (!job) {
+              job = {
+                run_id,
+                pcId: targetPcId,
+                test_type: payload.test_type || 'Laundry',
+                status: 'Starting',
+                suite: payload.test_type || 'Laundry',
+                startedAt: Date.now(),
+                devices: targetDevs,
+                elapsed_secs: 0,
+                recentLogs: [`[Hub] Initializing run ${run_id} (${payload.test_type || 'Test'}) for ${targetDevs.join(', ') || 'devices'}...`]
+              };
+              activeJobs.set(run_id, job);
+              broadcastFleetState();
+            }
+
+            if (sendToBridge(targetPcId, { type: 'CMD_RUN_SUITE', payload })) {
+              console.log(`[Hub] Dispatched CMD_RUN_SUITE (${run_id}) to ${targetPcId}`);
+            }
           }
           break;
         }

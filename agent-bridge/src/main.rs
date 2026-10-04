@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -179,19 +179,33 @@ async fn run_bridge_worker(state: AppState) {
                                         match msg_type {
                                             "CMD_RUN_SUITE" => {
                                                 if let Some(payload_val) = val.get("payload") {
-                                                    if let Ok(payload) = serde_json::from_value::<RunSuitePayload>(payload_val.clone()) {
-                                                        log_msg(&state, format!("[Bridge] Received CMD_RUN_SUITE: {}", payload.test_type));
+                                                    if let Ok(mut payload) = serde_json::from_value::<RunSuitePayload>(payload_val.clone()) {
+                                                        let run_id = payload.run_id.clone().unwrap_or_else(|| {
+                                                            format!("run-{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs())
+                                                        });
+                                                        payload.run_id = Some(run_id.clone());
+                                                        log_msg(&state, format!("[Bridge] Received CMD_RUN_SUITE: {} (run_id: {})", payload.test_type, run_id));
                                                         let auto_root_run = auto_root.clone();
-                                                        let run_id = payload.run_id.clone().unwrap_or_default();
                                                         let (log_tx, mut log_rx) = mpsc::unbounded_channel::<String>();
                                                         let (stat_tx, mut stat_rx) = mpsc::unbounded_channel::<(String, String, u64)>();
 
-                                                        // Forward runner logs over WebSocket using scan_tx
                                                         let scan_tx_logs = scan_tx.clone();
                                                         let scan_tx_stat = scan_tx.clone();
+                                                        let scan_tx_fin = scan_tx.clone();
                                                         let run_id_log = run_id.clone();
                                                         let run_id_stat = run_id.clone();
+                                                        let run_id_fin = run_id.clone();
                                                         let test_type_stat = payload.test_type.clone();
+
+                                                        // Immediately announce run start
+                                                        let _ = scan_tx.send(Message::Text(json!({
+                                                            "type": "SUITE_STATUS_UPDATE",
+                                                            "run_id": run_id,
+                                                            "test_type": payload.test_type,
+                                                            "suite": payload.test_type,
+                                                            "status": "Running",
+                                                            "elapsed_secs": 0
+                                                        }).to_string()));
 
                                                         tokio::spawn(async move {
                                                             while let Some(line) = log_rx.recv().await {
@@ -224,6 +238,17 @@ async fn run_bridge_worker(state: AppState) {
                                                                 log_tx,
                                                                 stat_tx,
                                                             );
+                                                            let exit_code = match &outcome {
+                                                                Ok(o) => o.exit_code,
+                                                                Err(_) => 1,
+                                                            };
+                                                            let _ = scan_tx_fin.send(Message::Text(json!({
+                                                                "type": "RUN_FINISHED",
+                                                                "run_id": run_id_fin,
+                                                                "exit_code": exit_code,
+                                                                "summary": null,
+                                                                "zip_file": null
+                                                            }).to_string()));
                                                             log_msg(&state_clone, format!("[Bridge] Run completed: {:?}", outcome.as_ref().map(|o| o.exit_code)));
                                                         });
                                                     }

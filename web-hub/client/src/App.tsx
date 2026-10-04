@@ -110,6 +110,8 @@ export const App: React.FC = () => {
     setIsLaundryModalOpen(true);
   };
 
+  const [terminalSelectedRunId, setTerminalSelectedRunId] = useState<string>('');
+
   // Standby Devices Handlers
   const handleToggleSelectStandbyDevice = (serial: string) => {
     setSelectedStandbySerials((prev) =>
@@ -140,7 +142,10 @@ export const App: React.FC = () => {
         return dev ? dev.is_userdebug : false;
       });
 
+      const runId = `run-${Date.now()}`;
+      setTerminalSelectedRunId(runId);
       runSuite(pcId, {
+        run_id: runId,
         test_type: testType,
         target_model: targetModel,
         user_devices: userDevices,
@@ -153,7 +158,10 @@ export const App: React.FC = () => {
   };
 
   const handleRunLaundrySuite = (pcId: string, payload: any) => {
-    runSuite(pcId, payload);
+    const runId = payload.run_id || `run-${Date.now()}`;
+    const finalPayload = { ...payload, run_id: runId };
+    setTerminalSelectedRunId(runId);
+    runSuite(pcId, finalPayload);
     setIsTerminalModalOpen(true);
   };
 
@@ -297,6 +305,7 @@ export const App: React.FC = () => {
           onClose={() => setIsTerminalModalOpen(false)}
           activeJobs={activeJobs}
           jobHistory={jobHistory}
+          selectedRunId={terminalSelectedRunId}
           onCancelJob={cancelRun}
         />
       </main>
