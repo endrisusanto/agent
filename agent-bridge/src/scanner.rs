@@ -238,7 +238,7 @@ pub fn set_device_lamp(serial: &str, brighten: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn device_props(serial: &str) -> Result<HashMap<String, String>, String> {
+pub fn device_props(serial: &str) -> Result<HashMap<String, String>, String> {
     let output = Command::new("adb")
         .args(["-s", serial, "shell", "getprop"])
         .output()
