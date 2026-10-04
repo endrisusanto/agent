@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -750,6 +751,9 @@ fn run_suite_process(
         });
     }
 
+    let is_completed = Arc::new(AtomicBool::new(false));
+    let is_completed_clone = Arc::clone(&is_completed);
+
     let log_tx_out = log_tx.clone();
     let log_file_out = log_file.to_path_buf();
     let status_tx_clone = status_tx.clone();
@@ -764,6 +768,15 @@ fn run_suite_process(
                 let elapsed = start_inst.elapsed().as_secs();
                 let _ = status_tx_clone.send((suite_name.clone(), "Running".to_string(), elapsed));
                 let _ = log_tx_out.send(format!("[{suite_out_tag}] {line}"));
+
+                if line.contains("Result/Log Location")
+                    || line.contains("=============== Summary ===============")
+                    || line.contains("=================== End ====================")
+                    || line.contains("All done")
+                    || (line.contains("run_command session_id:") && line.contains("result: COMPLETED"))
+                {
+                    is_completed_clone.store(true, Ordering::SeqCst);
+                }
             }
         });
     }
@@ -776,8 +789,9 @@ fn run_suite_process(
             break;
         }
 
-        if suite_log_has_completion_marker(log_file) {
+        if is_completed.load(Ordering::SeqCst) || suite_log_has_completion_marker(log_file) {
             let _ = log_tx.send(format!("[AI Worker] {suite}: completion marker detected; closing tradefed console."));
+            std::thread::sleep(Duration::from_millis(500));
             terminate_process_tree(pid);
             let _ = child.wait();
             code = 0;
@@ -943,8 +957,8 @@ fn run_tradefed_console_command(
     suite: &str,
     executable: &Path,
     console_command: &str,
-    _log_file: &Path,
-    _timeout_secs: u64,
+    log_file: &Path,
+    timeout_secs: u64,
     run_id: &str,
     log_tx: &mpsc::UnboundedSender<String>,
 ) -> Result<String, String> {
@@ -973,24 +987,72 @@ fn run_tradefed_console_command(
     }
     let _ = log_tx.send(format!("[AI Worker] {suite}: console pid={pid} command={console_command}"));
 
-    let output_str = if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        let mut lines = Vec::new();
-        for line in reader.lines().flatten() {
-            lines.push(line);
-        }
-        lines.join("\n")
-    } else {
-        String::new()
-    };
+    let output = Arc::new(Mutex::new(String::new()));
+    let output_ready = Arc::new(AtomicBool::new(false));
 
-    let _ = child.wait();
+    if let Some(stdout) = child.stdout.take() {
+        let out_buf = Arc::clone(&output);
+        let ready_flag = Arc::clone(&output_ready);
+        let log_file_clone = log_file.to_path_buf();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                append_file_line(&log_file_clone, &line);
+                if let Ok(mut text) = out_buf.lock() {
+                    text.push_str(&line);
+                    text.push('\n');
+                }
+                if line.contains("Pass") || line.contains("Session") || line.contains("cts-tf >") || line.contains("gts-tf >") || line.contains("console >") {
+                    ready_flag.store(true, Ordering::SeqCst);
+                }
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        let out_buf = Arc::clone(&output);
+        let log_file_clone = log_file.to_path_buf();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                append_file_line(&log_file_clone, &line);
+                if let Ok(mut text) = out_buf.lock() {
+                    text.push_str(&line);
+                    text.push('\n');
+                }
+            }
+        });
+    }
+
+    let started = Instant::now();
+    loop {
+        if let Ok(Some(_)) = child.try_wait() {
+            break;
+        }
+
+        if output_ready.load(Ordering::SeqCst) && started.elapsed().as_millis() > 1500 {
+            std::thread::sleep(Duration::from_millis(500));
+            terminate_process_tree(pid);
+            let _ = child.wait();
+            break;
+        }
+
+        if started.elapsed().as_secs() > timeout_secs {
+            terminate_process_tree(pid);
+            let _ = child.wait();
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
     {
         let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
         map.remove(run_id);
     }
 
-    Ok(output_str)
+    let result_str = output.lock().map(|t| t.clone()).unwrap_or_default();
+    Ok(result_str)
 }
 
 fn resolve_retry_session_id(
