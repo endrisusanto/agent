@@ -63,6 +63,10 @@ pub fn scan_all_devices(auto_root: &Path) -> Vec<DeviceInfo> {
                 if model.is_empty() {
                     model = props.get("ro.product.model").cloned().unwrap_or_default();
                 }
+                model = model.replace('_', "-").trim().to_uppercase();
+                if !model.is_empty() && !model.starts_with("SM-") && (model.starts_with('A') || model.starts_with('S') || model.starts_with('F') || model.starts_with('M') || model.starts_with('X') || model.starts_with('T')) {
+                    model = format!("SM-{}", model);
+                }
             }
             ip = device_ip(&serial).unwrap_or_else(|_| "USB".to_string());
         }

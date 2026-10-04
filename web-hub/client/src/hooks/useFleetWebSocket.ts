@@ -78,6 +78,8 @@ export interface LaundryRow {
   suite_version: string;
   result_dir: string;
   model: string;
+  ap_version?: string;
+  plan?: string;
 }
 
 export function useFleetWebSocket() {

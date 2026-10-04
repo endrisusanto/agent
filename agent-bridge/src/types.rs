@@ -54,6 +54,10 @@ pub struct LaundryResultInfo {
     pub suite_version: String,
     pub result_dir: String,
     pub model: String,
+    #[serde(default)]
+    pub ap_version: String,
+    #[serde(default)]
+    pub plan: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

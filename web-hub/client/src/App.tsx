@@ -7,7 +7,7 @@ import { StandbyDevicesAccordion } from './components/StandbyDevicesAccordion';
 import { RunningWorkflowAccordion } from './components/RunningWorkflowAccordion';
 import { ResultsExplorer } from './components/ResultsExplorer';
 import { LaundrySelectModal } from './components/LaundrySelectModal';
-import { LaundryWorkflowState } from './components/ModelLaundryWorkflow';
+import { LaundryWorkflowState, isModelMatch } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -231,15 +231,17 @@ export const App: React.FC = () => {
             if (activeWorkflowIdForPicker) {
               const wf = workflows.find((w) => w.id === activeWorkflowIdForPicker);
               if (wf) {
-                // 1. Extract model from XML rows or zip filename
+                // 1. Extract model, AP version, and plan from XML rows or zip filename
                 let detectedModel = rows.find((r) => r.model)?.model || '';
-                let detectedPda = '';
+                const detectedAp = rows.find((r) => r.ap_version)?.ap_version || '';
+                const detectedPlan = rows.find((r) => r.plan)?.plan || 'SMR';
+                let detectedPda = detectedAp;
 
                 if (!detectedModel) {
                   const filename = zipPath.split('/').pop() || '';
                   const base = filename.replace(/\.zip$/i, '');
                   const firstToken = base.split('_')[0] || '';
-                  detectedPda = firstToken;
+                  detectedPda = detectedPda || firstToken;
 
                   if (firstToken.startsWith('SM-') || firstToken.startsWith('sm-')) {
                     detectedModel = firstToken.toUpperCase();
@@ -261,9 +263,9 @@ export const App: React.FC = () => {
                   }
                 }
 
-                // 2. Find online devices matching this detected model
+                // 2. Find online devices matching this detected model (with underscore/hyphen normalization)
                 const matchingDevs = devices.filter((d) =>
-                  detectedModel ? d.model.toLowerCase() === detectedModel.toLowerCase() : false
+                  detectedModel ? isModelMatch(d.model, detectedModel) : false
                 );
 
                 const failedModules = rows
@@ -273,7 +275,9 @@ export const App: React.FC = () => {
                 handleUpdateWorkflow({
                   ...wf,
                   model: detectedModel || '',
-                  pda: detectedPda || (matchingDevs[0]?.pda ?? ''),
+                  pda: detectedAp || detectedPda || (matchingDevs[0]?.pda ?? ''),
+                  ap_version: detectedAp || detectedPda || (matchingDevs[0]?.pda ?? ''),
+                  plan: detectedPlan,
                   selectedZip: zipPath,
                   selectedModules: failedModules.length > 0 ? failedModules : rows.map((r) => r.testcase || r.suite),
                   selectedSerials: matchingDevs.map((d) => d.serial),

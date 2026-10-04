@@ -137,6 +137,19 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     filename_model.clone()
                 };
 
+                let parsed_ap = parse_xml_string_attr(&content, "build_version_incremental")
+                    .or_else(|| parse_xml_string_attr(&content, "incremental"))
+                    .or_else(|| parse_xml_entry_value(&content, "build_version_incremental"))
+                    .or_else(|| parse_xml_entry_value(&content, "ro.build.version.incremental"))
+                    .or_else(|| parse_xml_string_attr(&content, "build_id"))
+                    .unwrap_or_default();
+
+                let parsed_plan = parse_xml_string_attr(&content, "suite_plan")
+                    .or_else(|| parse_xml_string_attr(&content, "plan"))
+                    .or_else(|| parse_xml_string_attr(&content, "suite_variant"))
+                    .or_else(|| parse_xml_string_attr(&content, "suite_name"))
+                    .unwrap_or_else(|| suite.clone());
+
                 let total = parse_xml_attr(&content, "modules_total").unwrap_or(0);
                 let passed = parse_xml_attr(&content, "modules_done").unwrap_or(0);
                 let failed = parse_xml_attr(&content, "modules_not_done").unwrap_or(0);
@@ -161,6 +174,8 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     suite_version: "14_r2".to_string(),
                     result_dir: xml_path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
                     model: formatted_model,
+                    ap_version: parsed_ap,
+                    plan: parsed_plan,
                 });
             }
         }

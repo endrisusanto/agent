@@ -10,6 +10,15 @@ export interface LaundryWorkflowState {
   selectedModules: string[];
   selectedSerials: string[];
   pda?: string;
+  ap_version?: string;
+  plan?: string;
+}
+
+export function isModelMatch(m1?: string, m2?: string): boolean {
+  if (!m1 || !m2) return false;
+  const n1 = m1.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const n2 = m2.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return n1 === n2 || n1.endsWith(n2) || n2.endsWith(n1);
 }
 
 interface ModelLaundryWorkflowProps {
@@ -44,12 +53,10 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   const [isLaundryExpanded, setIsLaundryExpanded] = useState(true);
   const [isDevicesExpanded, setIsDevicesExpanded] = useState(true);
 
-  // Filter devices matching this workflow's model
+  // Filter devices matching this workflow's model with flexible underscore/hyphen normalization
   const matchingDevices = useMemo(() => {
     if (!workflow.model) return [];
-    return allDevices.filter((d) => {
-      return d.model.toLowerCase() === workflow.model.toLowerCase();
-    });
+    return allDevices.filter((d) => isModelMatch(d.model, workflow.model));
   }, [allDevices, workflow.model]);
 
   // Determine current active analysis rows for this workflow's selected zip
@@ -133,8 +140,12 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
   };
 
-  const modelName = workflow.model;
-  const pdaInfo = workflow.pda || (matchingDevices[0]?.pda ? matchingDevices[0].pda : '');
+  const planName = workflow.plan ? workflow.plan.toUpperCase() : 'SMR';
+  const apVersion = workflow.ap_version || workflow.pda || (matchingDevices[0]?.pda ?? '');
+  const isLoaded = Boolean(workflow.selectedZip || workflow.model || workflow.ap_version);
+  const titleText = isLoaded
+    ? `Laundry ${planName} ${apVersion || workflow.model}`.trim()
+    : 'LAUNDRY WORKFLOW (Pilih Zip Hasil Test)';
   const hasUserdebug = matchingDevices.some((d) => d.is_userdebug);
 
   return (
@@ -150,24 +161,25 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
             {isExpanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
           </button>
           <div className="accordion-model-info">
-            {modelName ? (
-              <>
-                <span className="accordion-model-name">{modelName}</span>
-                <span className={`badge badge-xs ${hasUserdebug ? 'badge-userdebug' : 'badge-user'}`}>
-                  {hasUserdebug ? 'USERDEBUG' : 'USER'}
-                </span>
-                {pdaInfo && <span className="accordion-pda-text">({pdaInfo})</span>}
-              </>
-            ) : (
-              <span className="accordion-model-name" style={{ color: 'var(--text-secondary)' }}>
-                LAUNDRY WORKFLOW (Pilih Zip Hasil Test)
+            <span
+              className="accordion-model-name"
+              style={{ color: isLoaded ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+            >
+              {titleText}
+            </span>
+            {isLoaded && workflow.model && (
+              <span className="badge badge-pc badge-xs">{workflow.model}</span>
+            )}
+            {isLoaded && (
+              <span className={`badge badge-xs ${hasUserdebug ? 'badge-userdebug' : 'badge-user'}`}>
+                {hasUserdebug ? 'USERDEBUG' : 'USER'}
               </span>
             )}
           </div>
         </div>
 
         <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
-          {modelName && (
+          {isLoaded && (
             <>
               <button
                 className="btn btn-suite-primary"
@@ -449,13 +461,13 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                       </tbody>
                     </table>
                   </div>
-                ) : !modelName ? (
+                ) : !workflow.model ? (
                   <div className="empty-state-compact">
                     Pilih file Zip hasil test di atas terlebih dahulu untuk mendeteksi model dan menghubungkan perangkat.
                   </div>
                 ) : (
                   <div className="empty-state-compact">
-                    Tidak ada perangkat online dengan model <strong>{modelName}</strong>.
+                    Tidak ada perangkat online dengan model <strong>{workflow.model}</strong>.
                   </div>
                 )}
               </div>
