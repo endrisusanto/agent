@@ -20,7 +20,7 @@ export const FleetHeader: React.FC<FleetHeaderProps> = ({
     <header className="header-bar">
       <div className="header-brand">
         <div className="brand-icon">
-          <ServerIcon size={20} />
+          <img src="/logo.png" alt="GBA Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
         </div>
         <div>
           <h1 className="brand-title">GBA Agentic Fleet Hub</h1>
