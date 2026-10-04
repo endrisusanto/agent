@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ActiveJobItem } from '../hooks/useFleetWebSocket';
-import { ChevronDownIcon, ChevronUpIcon, StopIcon } from './Icons';
+import { ChevronDownIcon, ChevronUpIcon, StopIcon, TerminalIcon } from './Icons';
 
 interface RunningWorkflowAccordionProps {
   activeJobs: ActiveJobItem[];
@@ -18,259 +18,292 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
   activeJobs,
   onCancelJob,
 }) => {
-  const [isExpanded, setIsExpanded] = useState<boolean>(true);
-  const [selectedTabId, setSelectedTabId] = useState<string>('running-all');
-  const [activeSubtab, setActiveSubtab] = useState<string>('ALL');
-  const [closedTabIds, setClosedTabIds] = useState<string[]>([]);
-  const [clearedRunLogs, setClearedRunLogs] = useState<Record<string, number>>({});
-  const logBoxRef = useRef<HTMLPreElement>(null);
+  // Accordion open/close states
+  const [isGlobalOpen, setIsGlobalOpen] = useState<boolean>(true);
+  const [isAiWorkerOpen, setIsAiWorkerOpen] = useState<boolean>(true);
+  const [isCtsOpen, setIsCtsOpen] = useState<boolean>(false);
+  const [isGtsOpen, setIsGtsOpen] = useState<boolean>(false);
+  const [isStsOpen, setIsStsOpen] = useState<boolean>(false);
 
-  // Filter visible tabs
-  const visibleJobs = useMemo(() => {
-    return (activeJobs || []).filter((job) => !closedTabIds.includes(job.run_id));
-  }, [activeJobs, closedTabIds]);
+  const [clearedLogs, setClearedLogs] = useState<Record<string, number>>({});
+  const globalLogRef = useRef<HTMLPreElement>(null);
+  const aiWorkerLogRef = useRef<HTMLPreElement>(null);
+  const ctsLogRef = useRef<HTMLPreElement>(null);
+  const gtsLogRef = useRef<HTMLPreElement>(null);
+  const stsLogRef = useRef<HTMLPreElement>(null);
 
-  // Sync selected tab if previous one disappeared or on initial load
-  useEffect(() => {
-    if (selectedTabId === 'running-all') return;
-    if (!visibleJobs.some((j) => j.run_id === selectedTabId)) {
-      if (visibleJobs.length > 0) {
-        setSelectedTabId(visibleJobs[0].run_id);
-      } else {
-        setSelectedTabId('running-all');
-      }
-    }
-  }, [visibleJobs, selectedTabId]);
-
-  const currentJob = (activeJobs || []).find((j) => j.run_id === selectedTabId);
-
-  // Extract raw log lines for current view
-  const rawLogs: string[] = useMemo(() => {
-    if (selectedTabId === 'running-all') {
-      const all: string[] = [];
-      (activeJobs || []).forEach((j) => {
-        const offset = clearedRunLogs[j.run_id] || 0;
-        const slice = (j.recentLogs || []).slice(offset);
-        all.push(...slice);
-      });
-      return all;
-    }
-    if (currentJob) {
-      const offset = clearedRunLogs[currentJob.run_id] || 0;
-      return (currentJob.recentLogs || []).slice(offset);
-    }
-    return [];
-  }, [selectedTabId, activeJobs, currentJob, clearedRunLogs]);
-
-  // Extract available subtab tags (e.g. AI Worker, CTS, GTS, STS, prepare, roxml, etc.)
-  const availableSubtabs = useMemo(() => {
-    const tags = new Set<string>();
-    tags.add('ALL');
-
-    const knownTags = ['AI Worker', 'CTS', 'GTS', 'STS', 'prepare', 'roxml', 'runner', 'Bridge'];
-    knownTags.forEach((t) => {
-      if (rawLogs.some((l) => typeof l === 'string' && l.toLowerCase().includes(`[${t.toLowerCase()}]`))) {
-        tags.add(t);
+  // Collect all raw log lines from all active jobs
+  const allRawLogs: string[] = useMemo(() => {
+    const list: string[] = [];
+    (activeJobs || []).forEach((j) => {
+      if (Array.isArray(j.recentLogs)) {
+        list.push(...j.recentLogs);
       }
     });
+    return list;
+  }, [activeJobs]);
 
-    // Also look for dynamic bracketed tags like [TAG]
-    rawLogs.forEach((line) => {
-      if (typeof line === 'string') {
-        const match = line.match(/\[([A-Za-z0-9_-]{2,15})\]/);
-        if (match && match[1]) {
-          const tagName = match[1];
-          if (!['time', 'date', 'log', 'stdout', 'stderr'].includes(tagName.toLowerCase())) {
-            tags.add(tagName);
-          }
-        }
-      }
+  // AI Worker Logs
+  const aiWorkerLogs = useMemo(() => {
+    return allRawLogs.filter((l) => {
+      if (typeof l !== 'string') return false;
+      const lower = l.toLowerCase();
+      return (
+        lower.includes('[ai worker]') ||
+        lower.includes('[runner]') ||
+        lower.includes('[bridge]') ||
+        lower.includes('[roxml]') ||
+        lower.includes('[prepare]') ||
+        lower.includes('[hub]')
+      );
     });
+  }, [allRawLogs]);
 
-    return Array.from(tags);
-  }, [rawLogs]);
+  // CTS Logs
+  const ctsLogs = useMemo(() => {
+    return allRawLogs.filter((l) => {
+      if (typeof l !== 'string') return false;
+      const lower = l.toLowerCase();
+      return lower.includes('[cts]') || lower.includes('cts-tradefed') || lower.includes('cts-smr') || lower.includes('cts-sku');
+    });
+  }, [allRawLogs]);
 
-  // Filter logs by subtab
-  const filteredLogs = useMemo(() => {
-    if (activeSubtab === 'ALL') return rawLogs;
-    const pattern = `[${activeSubtab.toLowerCase()}]`;
-    return rawLogs.filter((l) => typeof l === 'string' && l.toLowerCase().includes(pattern));
-  }, [rawLogs, activeSubtab]);
+  // GTS Logs
+  const gtsLogs = useMemo(() => {
+    return allRawLogs.filter((l) => {
+      if (typeof l !== 'string') return false;
+      const lower = l.toLowerCase();
+      return lower.includes('[gts]') || lower.includes('gts-tradefed') || lower.includes('gts_main') || lower.includes('gtsmr');
+    });
+  }, [allRawLogs]);
 
-  // Auto-scroll to bottom of logBox
+  // STS Logs
+  const stsLogs = useMemo(() => {
+    return allRawLogs.filter((l) => {
+      if (typeof l !== 'string') return false;
+      const lower = l.toLowerCase();
+      return lower.includes('[sts]') || lower.includes('sts-tradefed') || lower.includes('sts-dynamic-plan');
+    });
+  }, [allRawLogs]);
+
+  // Auto-scroll effect
   useEffect(() => {
-    if (logBoxRef.current) {
-      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
-    }
-  }, [filteredLogs.length]);
+    if (globalLogRef.current) globalLogRef.current.scrollTop = globalLogRef.current.scrollHeight;
+    if (aiWorkerLogRef.current) aiWorkerLogRef.current.scrollTop = aiWorkerLogRef.current.scrollHeight;
+    if (ctsLogRef.current) ctsLogRef.current.scrollTop = ctsLogRef.current.scrollHeight;
+    if (gtsLogRef.current) gtsLogRef.current.scrollTop = gtsLogRef.current.scrollHeight;
+    if (stsLogRef.current) stsLogRef.current.scrollTop = stsLogRef.current.scrollHeight;
+  }, [allRawLogs.length]);
 
-  const handleClearLog = () => {
-    if (selectedTabId === 'running-all') {
-      const nextClear: Record<string, number> = {};
-      (activeJobs || []).forEach((j) => {
-        nextClear[j.run_id] = j.recentLogs?.length || 0;
-      });
-      setClearedRunLogs(nextClear);
-    } else if (currentJob) {
-      setClearedRunLogs((prev) => ({
-        ...prev,
-        [currentJob.run_id]: currentJob.recentLogs?.length || 0,
-      }));
-    }
+  const handleClearSection = (key: string, length: number) => {
+    setClearedLogs((prev) => ({ ...prev, [key]: length }));
   };
 
-  const handleCloseTab = (e: React.MouseEvent, runId: string) => {
-    e.stopPropagation();
-    setClosedTabIds((prev) => [...prev, runId]);
-    if (selectedTabId === runId) {
-      const remaining = visibleJobs.filter((j) => j.run_id !== runId);
-      setSelectedTabId(remaining.length > 0 ? remaining[0].run_id : 'running-all');
-    }
+  const renderConsoleScreen = (
+    logs: string[],
+    ref: React.RefObject<HTMLPreElement>,
+    sectionKey: string,
+    emptyMsg: string
+  ) => {
+    const offset = clearedLogs[sectionKey] || 0;
+    const visibleLines = logs.slice(offset);
+
+    return (
+      <pre ref={ref} className="log-console-box">
+        {visibleLines.length > 0 ? (
+          visibleLines.map((line, idx) => {
+            let color = '#f0f6fc';
+            if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Failed') || line.includes('Exception')) {
+              color = '#ff7b72';
+            } else if (line.includes('PASS') || line.includes('Passed') || line.includes('ready') || line.includes('Completed')) {
+              color = '#7ee787';
+            } else if (line.includes('WARN') || line.includes('Warning') || line.includes('[roxml]')) {
+              color = '#e3b341';
+            } else if (line.includes('[AI Worker]') || line.includes('[runner]') || line.includes('[Bridge]')) {
+              color = '#79c0ff';
+            } else if (line.includes('[CTS]') || line.includes('[GTS]') || line.includes('[STS]')) {
+              color = '#d2a8ff';
+            } else if (line.includes('[prepare]')) {
+              color = '#56d364';
+            }
+
+            return (
+              <div key={idx} className="log-line" style={{ color }}>
+                {line}
+              </div>
+            );
+          })
+        ) : (
+          <div style={{ color: '#8b949e', textAlign: 'center', padding: '2rem' }}>
+            {emptyMsg}
+          </div>
+        )}
+      </pre>
+    );
   };
 
-  // UNCONDITIONAL HOOKS FINISHED: Check condition only when rendering JSX
+  // Do not render anything if no active jobs
   if (!activeJobs || activeJobs.length === 0) {
     return null;
   }
 
+  const primaryJob = activeJobs[0];
+
   return (
-    <section className="running-log-card">
-      {/* Header */}
-      <div className="running-log-head" onClick={() => setIsExpanded(!isExpanded)}>
-        <div className="running-log-head-title">
-          {isExpanded ? <ChevronDownIcon size={14} /> : <ChevronUpIcon size={14} />}
-          <span>CONSOLE LOG</span>
-          <span className="badge badge-running badge-xs">
-            {activeJobs.length} Active Run{activeJobs.length > 1 ? 's' : ''}
-          </span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
-          {currentJob && (
-            <>
-              <span className="mono-cell" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                ⏱ {formatDuration(currentJob.elapsed_secs || 0)}
-              </span>
-              <button
-                className="btn btn-danger btn-xs"
-                onClick={() => onCancelJob(currentJob.pcId, currentJob.run_id)}
-                title="Cancel Selected Run"
-              >
-                <StopIcon size={11} />
-                <span>Cancel Flow</span>
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Accordion Body */}
-      {isExpanded && (
-        <div className="running-log-body">
-          <div className="log-tab-stack">
-            {/* Row 1: Flow Tabs */}
-            <div className="log-tabs-row">
-              <div className="log-flow-tabs">
-                {visibleJobs.map((job) => {
-                  const isActive = selectedTabId === job.run_id;
-                  const devText = Array.isArray(job.devices) ? job.devices.join(', ') : (job.devices || 'Auto');
-                  const flowLabel = `${job.test_type || 'Suite'} | ${job.suite || 'Auto'} [${devText}]`;
-                  return (
-                    <div
-                      key={job.run_id}
-                      className={`log-tab-wrap ${isActive ? 'active' : ''}`}
-                      onClick={() => setSelectedTabId(job.run_id)}
-                      title={flowLabel}
-                    >
-                      <span className="log-tab-label">{flowLabel}</span>
-                      <button
-                        className="log-tab-close"
-                        title="Close Tab"
-                        onClick={(e) => handleCloseTab(e, job.run_id)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  );
-                })}
-
-                {/* Aggregate Running Tab */}
-                <div
-                  className={`log-tab-wrap ${selectedTabId === 'running-all' ? 'active' : ''}`}
-                  onClick={() => setSelectedTabId('running-all')}
-                  title="RUNNING LOG (All Flows)"
-                >
-                  <span className="log-tab-label">RUNNING LOG</span>
-                  {activeJobs.length > 0 && (
-                    <button
-                      className="log-tab-close"
-                      title="Reset tab filter"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedTabId(visibleJobs[0]?.run_id || 'running-all');
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Clear Log Button */}
-              <button className="log-clear-btn" onClick={handleClearLog} title="Clear Log Output">
-                Clear Log
-              </button>
-            </div>
-
-            {/* Row 2: Subtab Category Pills */}
-            <div className="log-subtabs-row">
-              {availableSubtabs.map((tag) => (
-                <button
-                  key={tag}
-                  className={`log-subtab-pill ${activeSubtab === tag ? 'active' : ''}`}
-                  onClick={() => setActiveSubtab(tag)}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem', marginBottom: '1.25rem' }}>
+      {/* 1. Global Terminal (RUNNING LOG) */}
+      <section className="running-log-card">
+        <div className="running-log-head" onClick={() => setIsGlobalOpen(!isGlobalOpen)}>
+          <div className="running-log-head-title">
+            <TerminalIcon size={16} />
+            <span>GLOBAL RUNNING LOG</span>
+            <span className="badge badge-running badge-xs">
+              {activeJobs.length} Active Run{activeJobs.length > 1 ? 's' : ''}
+            </span>
           </div>
 
-          {/* Console Output Screen */}
-          <pre ref={logBoxRef} id="logBox" className="log-console-box">
-            {filteredLogs.length > 0 ? (
-              filteredLogs.map((line, idx) => {
-                let color = '#f0f6fc';
-                if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Failed') || line.includes('Exception')) {
-                  color = '#ff7b72';
-                } else if (line.includes('PASS') || line.includes('Passed') || line.includes('ready') || line.includes('Completed')) {
-                  color = '#7ee787';
-                } else if (line.includes('WARN') || line.includes('Warning') || line.includes('[roxml]')) {
-                  color = '#e3b341';
-                } else if (line.includes('[AI Worker]') || line.includes('[runner]') || line.includes('[Bridge]')) {
-                  color = '#79c0ff';
-                } else if (line.includes('[CTS]') || line.includes('[GTS]') || line.includes('[STS]')) {
-                  color = '#d2a8ff';
-                } else if (line.includes('[prepare]')) {
-                  color = '#56d364';
-                }
-
-                return (
-                  <div key={idx} className="log-line" style={{ color }}>
-                    {line}
-                  </div>
-                );
-              })
-            ) : (
-              <div style={{ color: '#8b949e', textAlign: 'center', padding: '2.5rem' }}>
-                {activeJobs.length > 0
-                  ? '⏳ Menunggu log stream dari Tradefed runner...'
-                  : 'Belum ada active run log.'}
-              </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
+            {primaryJob && (
+              <>
+                <span className="mono-cell" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  ⏱ {formatDuration(primaryJob.elapsed_secs || 0)}
+                </span>
+                <button
+                  className="btn btn-danger btn-xs"
+                  onClick={() => onCancelJob(primaryJob.pcId, primaryJob.run_id)}
+                  title="Cancel Run"
+                >
+                  <StopIcon size={11} />
+                  <span>Cancel Flow</span>
+                </button>
+              </>
             )}
-          </pre>
+            <button
+              className="log-clear-btn"
+              onClick={() => handleClearSection('global', allRawLogs.length)}
+              title="Clear Global Log"
+            >
+              Clear Log
+            </button>
+            <span style={{ color: 'var(--text-muted)' }}>
+              {isGlobalOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+            </span>
+          </div>
         </div>
-      )}
-    </section>
+
+        {isGlobalOpen && (
+          <div className="running-log-body">
+            {renderConsoleScreen(allRawLogs, globalLogRef, 'global', '⏳ Menunggu aliran log terminal...')}
+          </div>
+        )}
+      </section>
+
+      {/* 2. Individual Child Accordions Grid */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+        {/* Child Accordion 1: AI Worker */}
+        <section className="running-log-card" style={{ marginBottom: 0 }}>
+          <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsAiWorkerOpen(!isAiWorkerOpen)}>
+            <div className="running-log-head-title">
+              <span>🤖 AI WORKER & ORCHESTRATION</span>
+              <span className="badge badge-pc badge-xs">{aiWorkerLogs.length} Lines</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="log-clear-btn"
+                onClick={() => handleClearSection('ai_worker', aiWorkerLogs.length)}
+              >
+                Clear
+              </button>
+              <span style={{ color: 'var(--text-muted)' }}>
+                {isAiWorkerOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+              </span>
+            </div>
+          </div>
+          {isAiWorkerOpen && (
+            <div className="running-log-body">
+              {renderConsoleScreen(aiWorkerLogs, aiWorkerLogRef, 'ai_worker', 'Belum ada log dari AI Worker / Device Preparation.')}
+            </div>
+          )}
+        </section>
+
+        {/* Child Accordion 2: CTS */}
+        <section className="running-log-card" style={{ marginBottom: 0 }}>
+          <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsCtsOpen(!isCtsOpen)}>
+            <div className="running-log-head-title">
+              <span>🧪 CTS TRADEFED RUNNER</span>
+              <span className="badge badge-unit badge-xs">{ctsLogs.length} Lines</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="log-clear-btn"
+                onClick={() => handleClearSection('cts', ctsLogs.length)}
+              >
+                Clear
+              </button>
+              <span style={{ color: 'var(--text-muted)' }}>
+                {isCtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+              </span>
+            </div>
+          </div>
+          {isCtsOpen && (
+            <div className="running-log-body">
+              {renderConsoleScreen(ctsLogs, ctsLogRef, 'cts', 'Belum ada aktivitas eksekusi CTS suite.')}
+            </div>
+          )}
+        </section>
+
+        {/* Child Accordion 3: GTS */}
+        <section className="running-log-card" style={{ marginBottom: 0 }}>
+          <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsGtsOpen(!isGtsOpen)}>
+            <div className="running-log-head-title">
+              <span>⚡ GTS TRADEFED RUNNER</span>
+              <span className="badge badge-unit badge-xs">{gtsLogs.length} Lines</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="log-clear-btn"
+                onClick={() => handleClearSection('gts', gtsLogs.length)}
+              >
+                Clear
+              </button>
+              <span style={{ color: 'var(--text-muted)' }}>
+                {isGtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+              </span>
+            </div>
+          </div>
+          {isGtsOpen && (
+            <div className="running-log-body">
+              {renderConsoleScreen(gtsLogs, gtsLogRef, 'gts', 'Belum ada aktivitas eksekusi GTS suite.')}
+            </div>
+          )}
+        </section>
+
+        {/* Child Accordion 4: STS */}
+        <section className="running-log-card" style={{ marginBottom: 0 }}>
+          <div className="running-log-head" style={{ backgroundColor: 'var(--bg-subtle)' }} onClick={() => setIsStsOpen(!isStsOpen)}>
+            <div className="running-log-head-title">
+              <span>🛡️ STS TRADEFED RUNNER</span>
+              <span className="badge badge-unit badge-xs">{stsLogs.length} Lines</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="log-clear-btn"
+                onClick={() => handleClearSection('sts', stsLogs.length)}
+              >
+                Clear
+              </button>
+              <span style={{ color: 'var(--text-muted)' }}>
+                {isStsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+              </span>
+            </div>
+          </div>
+          {isStsOpen && (
+            <div className="running-log-body">
+              {renderConsoleScreen(stsLogs, stsLogRef, 'sts', 'Belum ada aktivitas eksekusi STS suite.')}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
   );
 };
