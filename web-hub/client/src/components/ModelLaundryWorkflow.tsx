@@ -128,8 +128,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       selected_laundry_rows: selectedRowsData,
       user_devices: userDevices,
       userdebug_devices: userdebugDevices,
-      retry_count: 1,
-      timeout_secs: 7200,
+      retry_count: 5,
+      timeout_secs: 86400,
     });
   };
 

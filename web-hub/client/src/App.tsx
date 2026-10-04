@@ -126,8 +126,8 @@ export const App: React.FC = () => {
     );
   };
 
-  // Direct suite execution (SMR, SKU, NORMAL, STS, WIFI)
-  const handleDirectRunSuite = (testType: string, serials: string[]) => {
+  // Direct suite execution (1 Model, 1 Testplan: SMR, SKU, NORMAL, STS)
+  const handleDirectRunSuite = (testType: 'SMR' | 'SKU' | 'NORMAL' | 'STS', targetModel: string, serials: string[]) => {
     if (serials.length === 0) return;
 
     // Group serials by node PC
@@ -151,13 +151,11 @@ export const App: React.FC = () => {
 
       runSuite(pcId, {
         test_type: testType,
+        target_model: targetModel,
         user_devices: userDevices,
         userdebug_devices: userdebugDevices,
-        retry_count: 1,
-        timeout_secs: 7200,
-        wifi_enabled: testType === 'WIFI',
-        wifi_ssid: 'GBA-TEST-WIFI',
-        wifi_password: 'testpassword123',
+        retry_count: 5,
+        timeout_secs: 86400,
       });
     });
   };

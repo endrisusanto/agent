@@ -731,45 +731,50 @@ body {
   flex-wrap: wrap;
 }
 
-/* Direct Suite Button Group */
-.direct-suite-group {
-  display: flex;
-  gap: 0.3rem;
+/* Segmented Switch for Suite Testplan (1 Model, 1 Testplan at once) */
+.segmented-switch-container {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
+  background-color: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 2px;
 }
 
-.btn-suite-tag {
-  padding: 0.25rem 0.55rem;
+.switch-option {
+  padding: 0.25rem 0.65rem;
   font-size: 0.725rem;
   font-weight: 700;
   border-radius: var(--radius-sm);
-  border: 1px solid #1f6feb;
-  background: rgba(31, 111, 235, 0.15);
-  color: #58a6ff;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out-fast);
 }
 
-.btn-suite-tag:hover:not(:disabled) {
-  background: #1f6feb;
+.switch-option:hover:not(.active) {
+  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.switch-option.active {
+  background-color: #1f6feb;
   color: #ffffff;
+  border-color: #388bfd;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-.btn-suite-tag:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn-suite-wifi {
-  border-color: #238636;
-  background: rgba(35, 134, 54, 0.15);
-  color: #3fb950;
-}
-
-.btn-suite-wifi:hover:not(:disabled) {
-  background: #238636;
-  color: #ffffff;
+.notice-banner {
+  padding: 0.5rem 0.875rem;
+  background-color: rgba(210, 153, 34, 0.12);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+  border-radius: var(--radius-md);
+  color: #e3b341;
+  font-size: 0.785rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
 }
 
 .btn-suite-primary {

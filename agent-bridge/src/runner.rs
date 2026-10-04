@@ -60,16 +60,6 @@ pub fn execute_suite_run(
     let start_time = Instant::now();
     let _ = log_tx.send(format!("[Bridge] Starting {} run for devices: {}", payload.test_type, serials.join(", ")));
 
-    // Connect Wi-Fi if requested
-    if payload.wifi_enabled && !payload.wifi_ssid.is_empty() {
-        for s in &serials {
-            let _ = log_tx.send(format!("[Bridge] Connecting device {} to Wi-Fi {}", s, payload.wifi_ssid));
-            let _ = Command::new("adb")
-                .args(["-s", s, "shell", "cmd", "wifi", "connect-network", &payload.wifi_ssid, "wpa2", &payload.wifi_password])
-                .status();
-        }
-    }
-
     // Determine target suite path
     let suite_dir = auto_root.join(if payload.test_type == "STS" { "STS" } else { "CTS" });
     let results_dir = auto_root.join("Results");

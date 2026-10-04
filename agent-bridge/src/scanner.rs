@@ -99,35 +99,84 @@ pub fn scan_all_devices(auto_root: &Path) -> Vec<DeviceInfo> {
     devices
 }
 
+fn extract_model_from_filename(filename: &str) -> Option<String> {
+    let base = filename.strip_suffix(".zip").unwrap_or(filename);
+    let first_token = base.split('_').next().unwrap_or(base);
+
+    if first_token.starts_with("SM-") || first_token.starts_with("sm-") {
+        return Some(first_token.to_uppercase());
+    }
+
+    let mut model_part = String::new();
+    for ch in first_token.chars() {
+        if ch.is_ascii_alphanumeric() {
+            model_part.push(ch);
+            if model_part.len() >= 5 && (model_part.ends_with('F') || model_part.ends_with('B') || model_part.ends_with('G') || model_part.ends_with('E') || model_part.ends_with('P') || model_part.ends_with('N') || model_part.ends_with('U') || model_part.ends_with('W')) {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if !model_part.is_empty() && model_part.len() >= 4 {
+        if model_part.starts_with('A') || model_part.starts_with('S') || model_part.starts_with('F') || model_part.starts_with('M') || model_part.starts_with('X') || model_part.starts_with('T') {
+            return Some(format!("SM-{}", model_part.to_uppercase()));
+        }
+        return Some(model_part.to_uppercase());
+    }
+
+    None
+}
+
 pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
+    let mut dirs_to_scan = Vec::new();
+
+    // 1. Primary CUCIAN directory
+    let cucian_path = std::path::PathBuf::from("/home/endri-pro/Downloads/CUCIAN");
+    if cucian_path.is_dir() {
+        dirs_to_scan.push(cucian_path);
+    }
+
+    // 2. AUTO Results directory
     let results_dir = auto_root.join("Results");
-    if !results_dir.is_dir() {
-        return Vec::new();
+    if results_dir.is_dir() && !dirs_to_scan.contains(&results_dir) {
+        dirs_to_scan.push(results_dir);
     }
 
     let mut zips = Vec::new();
-    if let Ok(entries) = fs::read_dir(results_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("zip") {
-                let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                let meta = entry.metadata().ok();
-                let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified_at = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
+    let mut seen_paths = std::collections::HashSet::new();
 
-                let model = filename.split('_').nth(1).map(|s| s.to_string());
+    for dir in dirs_to_scan {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("zip") {
+                    let path_str = path.to_string_lossy().to_string();
+                    if seen_paths.contains(&path_str) {
+                        continue;
+                    }
+                    seen_paths.insert(path_str.clone());
 
-                zips.push(LaundryZipItem {
-                    filename,
-                    path: path.to_string_lossy().to_string(),
-                    size_bytes,
-                    modified_at,
-                    model,
-                });
+                    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let meta = entry.metadata().ok();
+                    let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                    let modified_at = meta
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+
+                    let model = extract_model_from_filename(&filename);
+
+                    zips.push(LaundryZipItem {
+                        filename,
+                        path: path_str,
+                        size_bytes,
+                        modified_at,
+                        model,
+                    });
+                }
             }
         }
     }
