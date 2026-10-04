@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+dist/
+target/
+
+# Logs & temp files
+*.log
+.gba-workspaces/
+.gba-agentic-results/
+.gba-bin/
+.DS_Store
+
+# Env & Build
+.env
+.env.local
+*.deb
+*.rpm
+*.exe

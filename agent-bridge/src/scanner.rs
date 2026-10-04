@@ -1,0 +1,219 @@
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+use std::time::UNIX_EPOCH;
+use crate::types::{BusyRegistry, DeviceInfo, LaundryZipItem};
+
+pub fn scan_all_devices(auto_root: &Path) -> Vec<DeviceInfo> {
+    let output = match Command::new("adb").arg("devices").arg("-l").output() {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+        Err(_) => return Vec::new(),
+    };
+
+    let busy_registry = read_busy_registry(auto_root);
+    let mut devices = Vec::new();
+
+    for line in output.lines().skip(1) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('*') {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        let serial = parts[0].to_string();
+        let state = parts.get(1).unwrap_or(&"offline").to_string();
+
+        let mut model = String::new();
+        for part in &parts[2..] {
+            if let Some(m) = part.strip_prefix("model:") {
+                model = m.to_string();
+            }
+        }
+
+        let mut is_userdebug = false;
+        let mut fingerprint = String::new();
+        let mut security_patch = String::new();
+        let mut android = String::new();
+        let mut sdk = String::new();
+        let mut sales_code = String::new();
+        let mut pda = String::new();
+        let mut cp = String::new();
+        let mut csc = String::new();
+        let mut ip = String::new();
+
+        if state == "device" {
+            if let Ok(props) = device_props(&serial) {
+                let build_type = props.get("ro.build.type").cloned().unwrap_or_default();
+                is_userdebug = build_type.eq_ignore_ascii_case("userdebug") || build_type.eq_ignore_ascii_case("eng");
+                fingerprint = props.get("ro.build.fingerprint").cloned().unwrap_or_default();
+                security_patch = props.get("ro.build.version.security_patch").cloned().unwrap_or_default();
+                android = props.get("ro.build.version.release").cloned().unwrap_or_default();
+                sdk = props.get("ro.build.version.sdk").cloned().unwrap_or_default();
+                sales_code = props.get("ro.csc.sales_code").cloned().unwrap_or_default();
+                pda = props.get("ro.boot.bootloader").cloned().unwrap_or_else(|| {
+                    props.get("ro.build.display.id").cloned().unwrap_or_default()
+                });
+                cp = props.get("gsm.version.baseband").cloned().unwrap_or_default();
+                csc = props.get("ro.boot.carrierid").cloned().unwrap_or_default();
+                if model.is_empty() {
+                    model = props.get("ro.product.model").cloned().unwrap_or_default();
+                }
+            }
+            ip = device_ip(&serial).unwrap_or_else(|_| "USB".to_string());
+        }
+
+        let busy_info = busy_registry.devices.get(&serial);
+        let busy = busy_info.is_some();
+        let busy_reason = busy_info
+            .map(|b| b.current_suite.clone().unwrap_or_else(|| b.test_type.clone()))
+            .unwrap_or_default();
+        let run_id = busy_info.map(|b| b.run_id.clone());
+        let result_dir = busy_info.and_then(|b| b.result_dir.clone());
+
+        devices.push(DeviceInfo {
+            serial,
+            state,
+            is_userdebug,
+            fingerprint,
+            security_patch,
+            android,
+            sdk,
+            sales_code,
+            model,
+            pda,
+            cp,
+            csc,
+            ip,
+            busy,
+            busy_reason,
+            run_id,
+            result_dir,
+        });
+    }
+
+    devices
+}
+
+pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
+    let results_dir = auto_root.join("Results");
+    if !results_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut zips = Vec::new();
+    if let Ok(entries) = fs::read_dir(results_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("zip") {
+                let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let meta = entry.metadata().ok();
+                let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let modified_at = meta
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+
+                let model = filename.split('_').nth(1).map(|s| s.to_string());
+
+                zips.push(LaundryZipItem {
+                    filename,
+                    path: path.to_string_lossy().to_string(),
+                    size_bytes,
+                    modified_at,
+                    model,
+                });
+            }
+        }
+    }
+
+    // Sort descending by modification date
+    zips.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    zips
+}
+
+pub fn set_device_lamp(serial: &str, brighten: bool) -> Result<(), String> {
+    if brighten {
+        let _ = Command::new("adb")
+            .args(["-s", serial, "shell", "input", "keyevent", "26"])
+            .status();
+        let _ = Command::new("adb")
+            .args(["-s", serial, "shell", "settings", "put", "system", "screen_brightness", "255"])
+            .status();
+    } else {
+        let _ = Command::new("adb")
+            .args(["-s", serial, "shell", "settings", "put", "system", "screen_brightness", "50"])
+            .status();
+    }
+    Ok(())
+}
+
+fn device_props(serial: &str) -> Result<HashMap<String, String>, String> {
+    let output = Command::new("adb")
+        .args(["-s", serial, "shell", "getprop"])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut props = HashMap::new();
+    for line in text.lines() {
+        if let Some((k, v)) = parse_getprop_line(line) {
+            props.insert(k, v);
+        }
+    }
+    Ok(props)
+}
+
+fn parse_getprop_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('[') {
+        return None;
+    }
+    let parts: Vec<&str> = trimmed.split("]: [").collect();
+    if parts.len() == 2 {
+        let key = parts[0].trim_start_matches('[').trim().to_string();
+        let val = parts[1].trim_end_matches(']').trim().to_string();
+        Some((key, val))
+    } else {
+        None
+    }
+}
+
+fn device_ip(serial: &str) -> Result<String, String> {
+    let output = Command::new("adb")
+        .args(["-s", serial, "shell", "ip", "route"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if line.contains("src ") {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            if let Some(pos) = tokens.iter().position(|&t| t == "src") {
+                if let Some(ip) = tokens.get(pos + 1) {
+                    return Ok(ip.to_string());
+                }
+            }
+        }
+    }
+    Ok("USB".to_string())
+}
+
+pub fn read_busy_registry(root: &Path) -> BusyRegistry {
+    let path = root.join("busy.json");
+    if let Ok(data) = fs::read_to_string(path) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        BusyRegistry::default()
+    }
+}
+
+pub fn write_busy_registry(root: &Path, registry: &BusyRegistry) -> Result<(), String> {
+    let path = root.join("busy.json");
+    let json = serde_json::to_string_pretty(registry).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
+}

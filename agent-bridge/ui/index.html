@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GBA Agent Bridge</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bridge-container">
+    <header class="bridge-header">
+      <div class="header-status">
+        <span class="status-indicator" id="statusDot"></span>
+        <span class="status-text" id="statusText">Connecting...</span>
+      </div>
+      <button id="btnOpenHub" class="btn btn-secondary">Open Web Hub</button>
+    </header>
+
+    <div class="metrics-row">
+      <div class="metric-card">
+        <span class="metric-label">Local Devices</span>
+        <span class="metric-value" id="deviceCount">0</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-label">Result Zips</span>
+        <span class="metric-value" id="zipCount">0</span>
+      </div>
+    </div>
+
+    <form id="configForm" class="config-form">
+      <div class="form-group">
+        <label for="pcId">Workstation ID (PC_ID)</label>
+        <input type="text" id="pcId" required placeholder="e.g. WORKSTATION-LAB-01" />
+      </div>
+
+      <div class="form-group">
+        <label for="hubUrl">Hub WebSocket URL</label>
+        <input type="text" id="hubUrl" required placeholder="wss://agent.endrisusanto.my.id/ws/bridge" />
+      </div>
+
+      <div class="form-group">
+        <label for="autoRoot">AUTO Suite Root Folder</label>
+        <div class="input-with-button">
+          <input type="text" id="autoRoot" required placeholder="/run/media/.../AUTO" />
+          <button type="button" id="btnBrowse" class="btn btn-secondary">Browse</button>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" id="btnSave" class="btn btn-primary">Save & Reconnect</button>
+      </div>
+    </form>
+
+    <div class="logs-section">
+      <div class="logs-header">
+        <span>Recent Bridge Activity</span>
+        <button id="btnClearLogs" class="btn-link">Clear</button>
+      </div>
+      <div class="log-console" id="logConsole"></div>
+    </div>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

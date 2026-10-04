@@ -1,0 +1,21 @@
+{
+  "name": "agentic-auto-fleet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Distributed Android Test Suite Automation (CTS/GTS/STS/Cuci SMR) Fleet Hub & Bridge System",
+  "workspaces": [
+    "web-hub/client",
+    "web-hub/server"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n \"SERVER,CLIENT\" -c \"blue,green\" \"npm run --workspace=web-hub/server dev\" \"npm run --workspace=web-hub/client dev\"",
+    "build": "npm run --workspace=web-hub/server build && npm run --workspace=web-hub/client build",
+    "hub:server": "npm run --workspace=web-hub/server dev",
+    "hub:client": "npm run --workspace=web-hub/client dev",
+    "bridge:dev": "cd agent-bridge && cargo run",
+    "bridge:build": "cd agent-bridge && cargo build --release"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
