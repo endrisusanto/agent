@@ -7,6 +7,7 @@ import { StandbyDevicesAccordion } from './components/StandbyDevicesAccordion';
 import { RunningWorkflowAccordion } from './components/RunningWorkflowAccordion';
 import { ResultsExplorer } from './components/ResultsExplorer';
 import { LaundrySelectModal } from './components/LaundrySelectModal';
+import { TerminalLogsModal } from './components/TerminalLogsModal';
 import { LaundryWorkflowState, isModelMatch } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
@@ -29,6 +30,7 @@ export const App: React.FC = () => {
 
   const [selectedStandbySerials, setSelectedStandbySerials] = useState<string[]>([]);
   const [isLaundryModalOpen, setIsLaundryModalOpen] = useState(false);
+  const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
   const [activeWorkflowIdForPicker, setActiveWorkflowIdForPicker] = useState<string>('');
   const [pickerPcId, setPickerPcId] = useState<string>('');
 
@@ -147,6 +149,12 @@ export const App: React.FC = () => {
         timeout_secs: 86400,
       });
     });
+    setIsTerminalModalOpen(true);
+  };
+
+  const handleRunLaundrySuite = (pcId: string, payload: any) => {
+    runSuite(pcId, payload);
+    setIsTerminalModalOpen(true);
   };
 
   const activePickerBridge = bridges.find((b) => b.pcId === pickerPcId) || bridges[0];
@@ -173,11 +181,7 @@ export const App: React.FC = () => {
           onModeChange={setSelectedModeFilter}
           bridges={bridges}
           activeJobsCount={activeJobs.length}
-          onToggleTerminalLogs={() => {
-            if (runningSectionRef.current) {
-              runningSectionRef.current.scrollIntoView({ behavior: 'smooth' });
-            }
-          }}
+          onToggleTerminalLogs={() => setIsTerminalModalOpen(true)}
         />
 
         {/* Active Running Test Suites & Live Logs */}
@@ -198,7 +202,7 @@ export const App: React.FC = () => {
           onRemoveWorkflow={handleRemoveWorkflow}
           onAddWorkflow={handleAddWorkflow}
           onOpenLaundryPicker={handleOpenLaundryPicker}
-          onRunSuite={runSuite}
+          onRunSuite={handleRunLaundrySuite}
           onToggleLamp={setDeviceLamp}
         />
 
@@ -285,6 +289,15 @@ export const App: React.FC = () => {
               }
             }
           }}
+        />
+
+        {/* Terminal Logs Modal */}
+        <TerminalLogsModal
+          isOpen={isTerminalModalOpen}
+          onClose={() => setIsTerminalModalOpen(false)}
+          activeJobs={activeJobs}
+          jobHistory={jobHistory}
+          onCancelJob={cancelRun}
         />
       </main>
     </div>

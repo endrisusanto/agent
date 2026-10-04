@@ -392,10 +392,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                           <th>PC ID</th>
                           <th>Model & Build</th>
                           <th>Serial Number</th>
-                          <th>Mode</th>
                           <th>Status</th>
-                          <th>Battery / Temp</th>
-                          <th>Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -416,7 +413,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                   onChange={() => handleToggleDevice(dev.serial)}
                                 />
                               </td>
-                              <td className="mono">{dev.pcId}</td>
+                              <td className="mono font-medium">{dev.pcId}</td>
                               <td>
                                 <div className="device-model-cell">
                                   <strong>{dev.model}</strong>
@@ -430,30 +427,11 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                               </td>
                               <td className="mono">{dev.serial}</td>
                               <td>
-                                <span className="badge badge-neutral badge-xs">
-                                  {dev.state || 'ADB'}
-                                </span>
-                              </td>
-                              <td>
                                 <span
                                   className={`badge badge-xs ${dev.busy ? 'badge-busy' : 'badge-ready'}`}
                                 >
                                   {dev.busy ? dev.busy_reason || 'BUSY' : 'READY'}
                                 </span>
-                              </td>
-                              <td>
-                                <span className="badge badge-neutral badge-xs">
-                                  {dev.battery_level !== undefined ? `${dev.battery_level}%` : '100%'}
-                                </span>
-                              </td>
-                              <td onClick={(e) => e.stopPropagation()}>
-                                <button
-                                  className="btn btn-icon-sm"
-                                  title="Ping / Lampu Layar"
-                                  onClick={() => onToggleLamp(dev.pcId, dev.serial, true)}
-                                >
-                                  <LampIcon size={14} />
-                                </button>
                               </td>
                             </tr>
                           );
