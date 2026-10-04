@@ -21,6 +21,26 @@ export function isModelMatch(m1?: string, m2?: string): boolean {
   return n1 === n2 || n1.endsWith(n2) || n2.endsWith(n1);
 }
 
+export function detectZipPlanKind(rows?: LaundryRow[], zipPath?: string, existingPlan?: string): 'SKU' | 'SMR' | 'Normal' {
+  if (existingPlan && ['SKU', 'SMR', 'Normal'].includes(existingPlan)) {
+    return existingPlan as 'SKU' | 'SMR' | 'Normal';
+  }
+  const rowList = Array.isArray(rows) ? rows : [];
+  const text = (
+    (zipPath || '') +
+    ' ' +
+    rowList.map((r) => `${r.suite || ''} ${r.plan || ''} ${r.subtestcases || ''} ${r.testcase || ''}`).join(' ')
+  ).toLowerCase();
+
+  if (text.includes('variant') || text.includes('sku') || text.includes('ctssku')) {
+    return 'SKU';
+  }
+  if (text.includes('smr') || text.includes('gtsmr') || text.includes('gtssmr') || text.includes('ctssmr') || text.includes('sts')) {
+    return 'SMR';
+  }
+  return 'Normal';
+}
+
 interface ModelLaundryWorkflowProps {
   workflow: LaundryWorkflowState;
   allDevices: DeviceItem[];
@@ -128,8 +148,9 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       return dev ? dev.is_userdebug : false;
     });
 
+    const detectedPlanName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
     onRunSuite(targetPcId, {
-      test_type: 'Cuci SMR',
+      test_type: `Laundry ${detectedPlanName}`,
       laundry_zip_path: workflow.selectedZip,
       selected_laundry_results: workflow.selectedModules,
       selected_laundry_rows: selectedRowsData,
@@ -140,7 +161,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
   };
 
-  const planName = workflow.plan ? workflow.plan.toUpperCase() : 'SMR';
+  const planName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
   const apVersion = workflow.ap_version || workflow.pda || (matchingDevices[0]?.pda ?? '');
   const isLoaded = Boolean(workflow.selectedZip || workflow.model || workflow.ap_version);
   const titleText = isLoaded

@@ -144,11 +144,7 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     .or_else(|| parse_xml_string_attr(&content, "build_id"))
                     .unwrap_or_default();
 
-                let parsed_plan = parse_xml_string_attr(&content, "suite_plan")
-                    .or_else(|| parse_xml_string_attr(&content, "plan"))
-                    .or_else(|| parse_xml_string_attr(&content, "suite_variant"))
-                    .or_else(|| parse_xml_string_attr(&content, "suite_name"))
-                    .unwrap_or_else(|| suite.clone());
+                let detected_plan = detect_laundry_plan_kind(&content, xml_path, original_zip_path);
 
                 let total = parse_xml_attr(&content, "modules_total").unwrap_or(0);
                 let passed = parse_xml_attr(&content, "modules_done").unwrap_or(0);
@@ -175,13 +171,28 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     result_dir: xml_path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
                     model: formatted_model,
                     ap_version: parsed_ap,
-                    plan: parsed_plan,
+                    plan: detected_plan,
                 });
             }
         }
     }
 
     Ok(results)
+}
+
+fn detect_laundry_plan_kind(content: &str, xml_path: &Path, original_zip_path: &Path) -> String {
+    let lower_content = content.to_lowercase();
+    let path_str = xml_path.to_string_lossy().to_lowercase();
+    let zip_str = original_zip_path.to_string_lossy().to_lowercase();
+    let combined = format!("{lower_content} {path_str} {zip_str}");
+
+    if combined.contains("variant") || combined.contains("sku") || combined.contains("ctssku") {
+        return "SKU".to_string();
+    }
+    if combined.contains("smr") || combined.contains("gtssmr") || combined.contains("gtsmr") || combined.contains("ctssmr") || combined.contains("sts") {
+        return "SMR".to_string();
+    }
+    "Normal".to_string()
 }
 
 fn extract_model_from_name(filename: &str) -> Option<String> {

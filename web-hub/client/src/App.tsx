@@ -8,7 +8,7 @@ import { RunningWorkflowAccordion } from './components/RunningWorkflowAccordion'
 import { ResultsExplorer } from './components/ResultsExplorer';
 import { LaundrySelectModal } from './components/LaundrySelectModal';
 import { TerminalLogsModal } from './components/TerminalLogsModal';
-import { LaundryWorkflowState, isModelMatch } from './components/ModelLaundryWorkflow';
+import { LaundryWorkflowState, isModelMatch, detectZipPlanKind } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -238,7 +238,7 @@ export const App: React.FC = () => {
                 // 1. Extract model, AP version, and plan from XML rows or zip filename
                 let detectedModel = rows.find((r) => r.model)?.model || '';
                 const detectedAp = rows.find((r) => r.ap_version)?.ap_version || '';
-                const detectedPlan = rows.find((r) => r.plan)?.plan || 'SMR';
+                const detectedPlan = detectZipPlanKind(rows, zipPath, rows.find((r) => r.plan)?.plan);
                 let detectedPda = detectedAp;
 
                 if (!detectedModel) {
