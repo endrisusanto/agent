@@ -179,78 +179,85 @@ async fn run_bridge_worker(state: AppState) {
                                         match msg_type {
                                             "CMD_RUN_SUITE" => {
                                                 if let Some(payload_val) = val.get("payload") {
-                                                    if let Ok(mut payload) = serde_json::from_value::<RunSuitePayload>(payload_val.clone()) {
-                                                        let run_id = payload.run_id.clone().unwrap_or_else(|| {
-                                                            format!("run-{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs())
-                                                        });
-                                                        payload.run_id = Some(run_id.clone());
-                                                        log_msg(&state, format!("[Bridge] Received CMD_RUN_SUITE: {} (run_id: {})", payload.test_type, run_id));
-                                                        let auto_root_run = auto_root.clone();
-                                                        let (log_tx, mut log_rx) = mpsc::unbounded_channel::<String>();
-                                                        let (stat_tx, mut stat_rx) = mpsc::unbounded_channel::<(String, String, u64)>();
+                                                    match serde_json::from_value::<RunSuitePayload>(payload_val.clone()) {
+                                                        Ok(mut payload) => {
+                                                            let run_id = payload.run_id.clone().unwrap_or_else(|| {
+                                                                format!("run-{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs())
+                                                            });
+                                                            payload.run_id = Some(run_id.clone());
+                                                            log_msg(&state, format!("[Bridge] Received CMD_RUN_SUITE: {} (run_id: {})", payload.test_type, run_id));
+                                                            let auto_root_run = auto_root.clone();
+                                                            let (log_tx, mut log_rx) = mpsc::unbounded_channel::<String>();
+                                                            let (stat_tx, mut stat_rx) = mpsc::unbounded_channel::<(String, String, u64)>();
 
-                                                        let scan_tx_logs = scan_tx.clone();
-                                                        let scan_tx_stat = scan_tx.clone();
-                                                        let scan_tx_fin = scan_tx.clone();
-                                                        let run_id_log = run_id.clone();
-                                                        let run_id_stat = run_id.clone();
-                                                        let run_id_fin = run_id.clone();
-                                                        let test_type_stat = payload.test_type.clone();
+                                                            let scan_tx_logs = scan_tx.clone();
+                                                            let scan_tx_stat = scan_tx.clone();
+                                                            let scan_tx_fin = scan_tx.clone();
+                                                            let run_id_log = run_id.clone();
+                                                            let run_id_stat = run_id.clone();
+                                                            let run_id_fin = run_id.clone();
+                                                            let test_type_stat = payload.test_type.clone();
 
-                                                        // Immediately announce run start
-                                                        let _ = scan_tx.send(Message::Text(json!({
-                                                            "type": "SUITE_STATUS_UPDATE",
-                                                            "run_id": run_id,
-                                                            "test_type": payload.test_type,
-                                                            "suite": payload.test_type,
-                                                            "status": "Running",
-                                                            "elapsed_secs": 0
-                                                        }).to_string()));
-
-                                                        tokio::spawn(async move {
-                                                            while let Some(line) = log_rx.recv().await {
-                                                                let _ = scan_tx_logs.send(Message::Text(json!({
-                                                                    "type": "LOG_STREAM",
-                                                                    "run_id": run_id_log,
-                                                                    "line": line
-                                                                }).to_string()));
-                                                            }
-                                                        });
-
-                                                        tokio::spawn(async move {
-                                                            while let Some((suite, status, elapsed)) = stat_rx.recv().await {
-                                                                let _ = scan_tx_stat.send(Message::Text(json!({
-                                                                    "type": "SUITE_STATUS_UPDATE",
-                                                                    "run_id": run_id_stat,
-                                                                    "test_type": test_type_stat,
-                                                                    "suite": suite,
-                                                                    "status": status,
-                                                                    "elapsed_secs": elapsed
-                                                                }).to_string()));
-                                                            }
-                                                        });
-
-                                                        let state_clone = state.clone();
-                                                        thread::spawn(move || {
-                                                            let outcome = runner::execute_suite_run(
-                                                                &auto_root_run,
-                                                                &payload,
-                                                                log_tx,
-                                                                stat_tx,
-                                                            );
-                                                            let exit_code = match &outcome {
-                                                                Ok(o) => o.exit_code,
-                                                                Err(_) => 1,
-                                                            };
-                                                            let _ = scan_tx_fin.send(Message::Text(json!({
-                                                                "type": "RUN_FINISHED",
-                                                                "run_id": run_id_fin,
-                                                                "exit_code": exit_code,
-                                                                "summary": null,
-                                                                "zip_file": null
+                                                            // Immediately announce run start
+                                                            let _ = scan_tx.send(Message::Text(json!({
+                                                                "type": "SUITE_STATUS_UPDATE",
+                                                                "run_id": run_id,
+                                                                "test_type": payload.test_type,
+                                                                "suite": payload.test_type,
+                                                                "status": "Running",
+                                                                "elapsed_secs": 0
                                                             }).to_string()));
-                                                            log_msg(&state_clone, format!("[Bridge] Run completed: {:?}", outcome.as_ref().map(|o| o.exit_code)));
-                                                        });
+
+                                                            tokio::spawn(async move {
+                                                                while let Some(line) = log_rx.recv().await {
+                                                                    let _ = scan_tx_logs.send(Message::Text(json!({
+                                                                        "type": "LOG_STREAM",
+                                                                        "run_id": run_id_log,
+                                                                        "line": line
+                                                                    }).to_string()));
+                                                                }
+                                                            });
+
+                                                            tokio::spawn(async move {
+                                                                while let Some((suite, status, elapsed)) = stat_rx.recv().await {
+                                                                    let _ = scan_tx_stat.send(Message::Text(json!({
+                                                                        "type": "SUITE_STATUS_UPDATE",
+                                                                        "run_id": run_id_stat,
+                                                                        "test_type": test_type_stat,
+                                                                        "suite": suite,
+                                                                        "status": status,
+                                                                        "elapsed_secs": elapsed
+                                                                    }).to_string()));
+                                                                }
+                                                            });
+
+                                                            let state_clone = state.clone();
+                                                            thread::spawn(move || {
+                                                                let outcome = runner::execute_suite_run(
+                                                                    &auto_root_run,
+                                                                    &payload,
+                                                                    log_tx,
+                                                                    stat_tx,
+                                                                );
+                                                                let exit_code = match &outcome {
+                                                                    Ok(o) => o.exit_code,
+                                                                    Err(_) => 1,
+                                                                };
+                                                                let _ = scan_tx_fin.send(Message::Text(json!({
+                                                                    "type": "RUN_FINISHED",
+                                                                    "run_id": run_id_fin,
+                                                                    "exit_code": exit_code,
+                                                                    "summary": null,
+                                                                    "zip_file": null
+                                                                }).to_string()));
+                                                                log_msg(&state_clone, format!("[Bridge] Run completed: {:?}", outcome.as_ref().map(|o| o.exit_code)));
+                                                            });
+                                                        }
+                                                        Err(e) => {
+                                                            let err_msg = format!("[Bridge Error] Failed to parse RunSuitePayload: {e}");
+                                                            log_msg(&state, &err_msg);
+                                                            eprintln!("{err_msg}");
+                                                        }
                                                     }
                                                 }
                                             }

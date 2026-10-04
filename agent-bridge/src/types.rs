@@ -60,22 +60,31 @@ pub struct LaundryResultInfo {
     pub plan: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RunSuitePayload {
     pub run_id: Option<String>,
     pub auto_root: Option<String>,
+    #[serde(default)]
     pub test_type: String,
+    pub target_model: Option<String>,
     pub laundry_zip_path: Option<String>,
     #[serde(default)]
     pub selected_laundry_results: Vec<String>,
     #[serde(default)]
     pub selected_laundry_rows: Vec<serde_json::Value>,
+    #[serde(default)]
     pub user_devices: Vec<String>,
+    #[serde(default)]
     pub userdebug_devices: Vec<String>,
+    #[serde(default)]
     pub retry_count: u32,
+    #[serde(default)]
     pub wifi_enabled: bool,
+    #[serde(default)]
     pub wifi_ssid: String,
+    #[serde(default)]
     pub wifi_password: String,
+    #[serde(default)]
     pub timeout_secs: u64,
 }
 
