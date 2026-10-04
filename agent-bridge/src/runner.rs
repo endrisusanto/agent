@@ -538,6 +538,21 @@ fn get_suite_info_from_xml(xml_path: &Path) -> Option<(String, String, String)> 
     None
 }
 
+fn classify_suite_name(name: &str) -> Option<String> {
+    let lower = name.to_lowercase();
+    if lower.contains("verifier") || lower.contains("ctsv") {
+        None
+    } else if lower.contains("cts") || lower.contains("compatibility") {
+        Some("CTS".to_string())
+    } else if lower.contains("gts") || lower.contains("google") {
+        Some("GTS".to_string())
+    } else if lower.contains("sts") || lower.contains("security") {
+        Some("STS".to_string())
+    } else {
+        None
+    }
+}
+
 fn suite_version_from_result(result_dir: &Path) -> Option<String> {
     let (_, version, _) = get_suite_info_from_xml(&result_dir.join("test_result.xml"))?;
     suite_version_from_result_version(&version)
@@ -1244,15 +1259,49 @@ fn scan_laundry_results(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf
     let mut sts = Vec::new();
 
     for entry in WalkDir::new(root).into_iter().flatten() {
-        if entry.file_name() == "test_result.xml" {
-            let parent = entry.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| entry.path().to_path_buf());
+        if !entry.file_type().is_file() || entry.file_name() != "test_result.xml" {
+            continue;
+        }
+        let Some(parent) = entry.path().parent().map(|p| p.to_path_buf()) else {
+            continue;
+        };
+
+        let mut suite_type = None;
+        if let Some((name, _, _)) = get_suite_info_from_xml(&entry.path()) {
+            suite_type = classify_suite_name(&name);
+        }
+
+        if suite_type.is_none() {
             let path_str = parent.to_string_lossy().to_lowercase();
             if path_str.contains("gts") {
-                gts.push(parent);
+                suite_type = Some("GTS".to_string());
             } else if path_str.contains("sts") {
-                sts.push(parent);
-            } else {
-                cts.push(parent);
+                suite_type = Some("STS".to_string());
+            } else if path_str.contains("cts") {
+                suite_type = Some("CTS".to_string());
+            }
+        }
+
+        match suite_type.as_deref() {
+            Some("CTS") => {
+                if !cts.contains(&parent) {
+                    cts.push(parent);
+                }
+            }
+            Some("GTS") => {
+                if !gts.contains(&parent) {
+                    gts.push(parent);
+                }
+            }
+            Some("STS") => {
+                if !sts.contains(&parent) {
+                    sts.push(parent);
+                }
+            }
+            _ => {
+                if !cts.contains(&parent) {
+                    cts.push(parent);
+                }
             }
         }
     }
@@ -1413,7 +1462,7 @@ fn run_laundry_smr_flow(
 
         if !source.cts_results.is_empty() {
             let _ = log_tx.send(format!("[AI Worker] CTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.cts_results.len()));
-            let cts_codes = run_laundry_retries(
+            match run_laundry_retries(
                 auto_root,
                 session_dir,
                 log_dir,
@@ -1429,13 +1478,18 @@ fn run_laundry_smr_flow(
                 log_tx,
                 status_tx,
                 collected_zips,
-            )?;
-            exit_codes.extend(cts_codes);
+            ) {
+                Ok(cts_codes) => exit_codes.extend(cts_codes),
+                Err(err) => {
+                    let _ = log_tx.send(format!("[AI Worker] CTS retry failed: {err}"));
+                    exit_codes.push(1);
+                }
+            }
         }
 
         if !source.gts_results.is_empty() {
             let _ = log_tx.send(format!("[AI Worker] GTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.gts_results.len()));
-            let gts_codes = run_laundry_retries(
+            match run_laundry_retries(
                 auto_root,
                 session_dir,
                 log_dir,
@@ -1451,8 +1505,13 @@ fn run_laundry_smr_flow(
                 log_tx,
                 status_tx,
                 collected_zips,
-            )?;
-            exit_codes.extend(gts_codes);
+            ) {
+                Ok(gts_codes) => exit_codes.extend(gts_codes),
+                Err(err) => {
+                    let _ = log_tx.send(format!("[AI Worker] GTS retry failed: {err}"));
+                    exit_codes.push(1);
+                }
+            }
         }
     } else if !has_cts_or_gts {
         let _ = log_tx.send("[AI Worker] Laundry (SMR): STS-only selected, skipping GTS property/gtsmr process.".to_string());
