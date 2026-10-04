@@ -196,6 +196,7 @@ export const App: React.FC = () => {
         <div ref={runningSectionRef}>
           <RunningWorkflowAccordion
             activeJobs={activeJobs}
+            devices={devices}
             onCancelJob={cancelRun}
           />
         </div>

@@ -106,10 +106,13 @@ pub fn execute_suite_run(
             cmd.arg("cts");
         }
 
-        // Add selected laundry module filters if present
+        // Add selected laundry module filters if present (filter out timestamp session directories)
         for module in &payload.selected_laundry_results {
-            cmd.arg("-m");
-            cmd.arg(module);
+            let is_timestamp_dir = module.starts_with("202") && module.contains('_') && module.contains('.');
+            if !is_timestamp_dir && !module.is_empty() {
+                cmd.arg("-m");
+                cmd.arg(module);
+            }
         }
 
         cmd.arg(&shard_arg);
