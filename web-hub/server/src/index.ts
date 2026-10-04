@@ -157,9 +157,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve static frontend files if built
+// Serve static frontend files if built with no-cache headers for HTML
 const clientDist = path.join(__dirname, '../../client/dist');
-app.use(express.static(clientDist));
+app.use(express.static(clientDist, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+}));
 
 // REST: Fleet Diagnostics & Status
 app.get('/api/fleet/status', (_req, res) => {
