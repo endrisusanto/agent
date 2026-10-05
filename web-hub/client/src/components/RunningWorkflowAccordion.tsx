@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ActiveJobItem, DeviceItem } from '../hooks/useFleetWebSocket';
-import { ChevronDownIcon, ChevronUpIcon, StopIcon } from './Icons';
+import { ChevronDownIcon, ChevronUpIcon, StopIcon, TrashIcon } from './Icons';
 
 interface RunningWorkflowAccordionProps {
   activeJobs: ActiveJobItem[];
+  jobHistory?: ActiveJobItem[];
   devices?: DeviceItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
 }
@@ -19,9 +20,15 @@ const SingleWorkflowRunner: React.FC<{
   job: ActiveJobItem;
   devices?: DeviceItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
-}> = ({ job, devices, onCancelJob }) => {
-  const [isParentOpen, setIsParentOpen] = useState<boolean>(true);
-  const [isAiWorkerOpen, setIsAiWorkerOpen] = useState<boolean>(true);
+  onDismiss: (run_id: string) => void;
+}> = ({ job, devices, onCancelJob, onDismiss }) => {
+  const isRunning = job.status === 'Running' || job.status === 'Starting';
+  const isFinished = job.status === 'Finished' || job.status === 'Test Done';
+  const isFailed = job.status === 'Failed';
+
+  // Active runs default collapsed to keep dashboard clean and avoid visual overwhelm
+  const [isParentOpen, setIsParentOpen] = useState<boolean>(false);
+  const [isAiWorkerOpen, setIsAiWorkerOpen] = useState<boolean>(false);
   const [isCtsOpen, setIsCtsOpen] = useState<boolean>(false);
   const [isGtsOpen, setIsGtsOpen] = useState<boolean>(false);
   const [isStsOpen, setIsStsOpen] = useState<boolean>(false);
@@ -62,7 +69,7 @@ const SingleWorkflowRunner: React.FC<{
     });
   }, [rawLogs]);
 
-  // CTS Logs (Filter strictly for CTS lines)
+  // CTS Logs
   const ctsLogs = useMemo(() => {
     return rawLogs
       .filter((l) => {
@@ -72,7 +79,7 @@ const SingleWorkflowRunner: React.FC<{
       .map((l) => (l.startsWith('[CTS] ') ? l.substring(6) : l.startsWith('[CTS]') ? l.substring(5) : l));
   }, [rawLogs]);
 
-  // GTS Logs (Filter strictly for GTS lines)
+  // GTS Logs
   const gtsLogs = useMemo(() => {
     return rawLogs
       .filter((l) => {
@@ -82,7 +89,7 @@ const SingleWorkflowRunner: React.FC<{
       .map((l) => (l.startsWith('[GTS] ') ? l.substring(6) : l.startsWith('[GTS]') ? l.substring(5) : l));
   }, [rawLogs]);
 
-  // STS Logs (Filter strictly for STS lines)
+  // STS Logs
   const stsLogs = useMemo(() => {
     return rawLogs
       .filter((l) => {
@@ -173,94 +180,138 @@ const SingleWorkflowRunner: React.FC<{
     );
   };
 
+  const statusBadgeClass = isRunning
+    ? 'badge-running'
+    : isFinished
+    ? 'badge-ready'
+    : isFailed
+    ? 'badge-fail'
+    : 'badge-busy';
+
+  const glowClass = isRunning
+    ? 'glow-outline-running'
+    : isFinished
+    ? 'glow-outline-finished'
+    : isFailed
+    ? 'glow-outline-failed'
+    : 'glow-outline-idle';
+
+  const getSuiteStatus = (suiteName: 'STS' | 'CTS' | 'GTS', logs: string[]) => {
+    const currentSuite = (job.suite || '').toUpperCase();
+    const hasLogs = logs.length > 0;
+    const isFinishedLog = logs.some(
+      (l) => l.includes('tradefed finished') || l.includes('End of Results') || l.includes('All done') || l.includes('Summary')
+    );
+
+    if (isFinished || (!isRunning && hasLogs)) {
+      const hasFailed = logs.some((l) => l.includes('result: ERROR') || l.includes('FAILED') || l.includes('failed with code'));
+      if (hasFailed) return { text: '✕ FAILED', cls: 'badge-fail' };
+      return { text: '✓ COMPLETED', cls: 'badge-ready' };
+    }
+
+    if (isRunning) {
+      if (currentSuite.includes(suiteName)) {
+        return { text: '⚡ RUNNING', cls: 'badge-running' };
+      }
+      if (hasLogs && isFinishedLog) {
+        return { text: '✓ COMPLETED', cls: 'badge-ready' };
+      }
+      if (hasLogs) {
+        return { text: '⚡ RUNNING', cls: 'badge-running' };
+      }
+      return { text: '⏳ ANTRI', cls: 'badge-busy' };
+    }
+
+    return null;
+  };
+
+  const stsStatus = getSuiteStatus('STS', stsLogs);
+  const ctsStatus = getSuiteStatus('CTS', ctsLogs);
+  const gtsStatus = getSuiteStatus('GTS', gtsLogs);
+
   return (
-    <section className="laundry-table-card" style={{ marginBottom: '1rem', border: '1px solid var(--accent-primary)', borderRadius: '8px' }}>
-      {/* Parent Accordion Header (Model + AP Version + Status) */}
+    <section className={`laundry-table-card ${glowClass}`} style={{ marginBottom: 0, borderRadius: '10px', overflow: 'hidden', transition: 'all 0.25s ease' }}>
+      {/* Testrun Child Accordion Header */}
       <div
         className="laundry-table-head"
         onClick={() => setIsParentOpen(!isParentOpen)}
-        style={{ cursor: 'pointer', backgroundColor: 'var(--bg-subtle)', padding: '0.875rem 1rem', borderTopLeftRadius: '8px', borderTopRightRadius: '8px' }}
+        style={{
+          cursor: 'pointer',
+          backgroundColor: 'var(--bg-subtle)',
+          padding: '0.875rem 1.125rem',
+          borderRadius: isParentOpen ? '10px 10px 0 0' : '10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          flexWrap: 'wrap'
+        }}
       >
-        <div className="laundry-table-head-left" style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--text-muted)' }}>
-            {isParentOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
-          </span>
-          <strong style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            WORKFLOW: {job.test_type || job.suite}
-          </strong>
-          <span className="badge badge-running badge-xs">{targetModel}</span>
-          <span className="badge badge-pc badge-xs mono-cell">{apVersion}</span>
-          <span className={`badge ${isUserdebug ? 'badge-userdebug' : 'badge-user'} badge-xs`}>
-            {isUserdebug ? 'USERDEBUG' : 'USER'}
-          </span>
-          <span className="mono-cell" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            ({(job.devices || []).join(', ')} • {job.pcId})
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1, minWidth: '280px' }}>
+          {/* Main Title Row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--text-muted)' }}>
+              {isParentOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+            </span>
+            <span className={`badge ${statusBadgeClass} badge-xs`} style={{ fontWeight: 700 }}>
+              {isRunning ? '⚡ RUNNING' : isFinished ? '✓ FINISHED' : isFailed ? '✕ FAILED' : job.status.toUpperCase()}
+            </span>
+            <strong style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+              WORKFLOW: {job.test_type || job.suite}
+            </strong>
+            {job.pcId && <span className="badge badge-pc badge-xs">{job.pcId}</span>}
+            {targetModel && <span className="badge badge-pc badge-xs">{targetModel}</span>}
+            {apVersion && <span className="badge badge-pc badge-xs mono-cell">{apVersion}</span>}
+          </div>
+
+          {/* Subtitle / Newline Details */}
+          <div style={{ paddingLeft: '1.625rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span className="mono-cell" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              ({(job.devices || []).join(', ')} • {job.pcId} • {job.run_id})
+            </span>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
-          <span className="mono-cell" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+        {/* Right Section: Timer, Action (Cancel Flow), and Delete/Dismiss Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <span
+            className="mono-cell"
+            style={{
+              fontSize: '0.8125rem',
+              color: isRunning ? 'var(--accent-warning, #f59e0b)' : 'var(--text-secondary)',
+              fontWeight: isRunning ? 700 : 400,
+              backgroundColor: 'var(--bg-card, rgba(255,255,255,0.04))',
+              padding: '0.2rem 0.5rem',
+              borderRadius: '4px',
+              border: '1px solid var(--border-color, rgba(255,255,255,0.08))'
+            }}
+          >
             ⏱ {formatDuration(job.elapsed_secs || 0)}
           </span>
+          {isRunning && (
+            <button
+              className="btn btn-danger btn-xs"
+              onClick={() => onCancelJob(job.pcId, job.run_id)}
+              title="Cancel Flow"
+            >
+              <StopIcon size={11} />
+              <span>Cancel Flow</span>
+            </button>
+          )}
           <button
-            className="btn btn-danger btn-xs"
-            onClick={() => onCancelJob(job.pcId, job.run_id)}
-            title="Cancel Flow"
+            className="btn-icon-danger"
+            onClick={() => onDismiss(job.run_id)}
+            title="Tutup / Dismiss Accordion Log Run ini"
+            aria-label="Dismiss Run Accordion"
           >
-            <StopIcon size={11} />
-            <span>Cancel Flow</span>
+            <TrashIcon size={14} />
           </button>
         </div>
       </div>
 
-      {/* Parent Accordion Body */}
+      {/* Testrun Child Accordion Body */}
       {isParentOpen && (
         <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          {/* 0. Ready Result ZIPs Download Banner */}
-          {availableZips.length > 0 && (
-            <div
-              style={{
-                backgroundColor: 'rgba(56, 139, 253, 0.1)',
-                border: '1px solid rgba(56, 139, 253, 0.4)',
-                borderRadius: '6px',
-                padding: '0.75rem 1rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '0.625rem',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '1.125rem' }}>📦</span>
-                <div>
-                  <strong style={{ fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                    Hasil Test Suite Siap Diunduh ({availableZips.length} ZIP):
-                  </strong>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    File zip hasil retry Tradefed tersimpan di direktori Results
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {availableZips.map((zipName) => (
-                  <a
-                    key={zipName}
-                    href={`/api/results/download?run_id=${encodeURIComponent(job.run_id)}&file=${encodeURIComponent(zipName)}`}
-                    download={zipName}
-                    className="btn btn-success btn-xs"
-                    style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
-                    title={`Download ${zipName}`}
-                  >
-                    <span>💾</span>
-                    <span className="mono-cell">{zipName}</span>
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* 1. AI Worker & Agentic Flow Summary (Top Section) */}
           <section className="running-log-card" style={{ marginBottom: 0 }}>
             <div
@@ -303,7 +354,11 @@ const SingleWorkflowRunner: React.FC<{
                 <div className="running-log-head-title">
                   <span>🛡️ STS TRADEFED RUNNER</span>
                   <span className="badge badge-unit badge-xs">{stsLogs.length} Lines</span>
-                  {stsLogs.length > 0 && <span className="badge badge-running badge-xs">ACTIVE</span>}
+                  {stsStatus && (
+                    <span className={`badge ${stsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
+                      {stsStatus.text}
+                    </span>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                   <button
@@ -334,7 +389,11 @@ const SingleWorkflowRunner: React.FC<{
                 <div className="running-log-head-title">
                   <span>🧪 CTS TRADEFED RUNNER</span>
                   <span className="badge badge-unit badge-xs">{ctsLogs.length} Lines</span>
-                  {ctsLogs.length > 0 && <span className="badge badge-running badge-xs">ACTIVE</span>}
+                  {ctsStatus && (
+                    <span className={`badge ${ctsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
+                      {ctsStatus.text}
+                    </span>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                   <button
@@ -365,7 +424,11 @@ const SingleWorkflowRunner: React.FC<{
                 <div className="running-log-head-title">
                   <span>⚡ GTS TRADEFED RUNNER</span>
                   <span className="badge badge-unit badge-xs">{gtsLogs.length} Lines</span>
-                  {gtsLogs.length > 0 && <span className="badge badge-running badge-xs">ACTIVE</span>}
+                  {gtsStatus && (
+                    <span className={`badge ${gtsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
+                      {gtsStatus.text}
+                    </span>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                   <button
@@ -394,23 +457,157 @@ const SingleWorkflowRunner: React.FC<{
 
 export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> = ({
   activeJobs,
+  jobHistory = [],
   devices,
   onCancelJob,
 }) => {
-  if (!activeJobs || activeJobs.length === 0) {
+  const [isMasterOpen, setIsMasterOpen] = useState<boolean>(false);
+  const [dismissedRunIds, setDismissedRunIds] = useState<string[]>([]);
+
+  // Maintain list of all runs: active runs + finished runs (newest first)
+  const displayRuns = useMemo(() => {
+    const runMap = new Map<string, ActiveJobItem>();
+
+    // First add history jobs
+    for (const j of jobHistory) {
+      if (j && j.run_id) {
+        runMap.set(j.run_id, j);
+      }
+    }
+
+    // Active jobs override or add
+    for (const j of activeJobs) {
+      if (j && j.run_id) {
+        runMap.set(j.run_id, j);
+      }
+    }
+
+    const all = Array.from(runMap.values());
+    all.sort((a, b) => {
+      const aRunning = a.status === 'Running' || a.status === 'Starting';
+      const bRunning = b.status === 'Running' || b.status === 'Starting';
+      if (aRunning && !bRunning) return -1;
+      if (!aRunning && bRunning) return 1;
+      return (b.startedAt || 0) - (a.startedAt || 0);
+    });
+    // Filter out dismissed runs
+    return all.filter((j) => !dismissedRunIds.includes(j.run_id));
+  }, [activeJobs, jobHistory, dismissedRunIds]);
+
+  const activeCount = useMemo(() => {
+    return displayRuns.filter((j) => j.status === 'Running' || j.status === 'Starting').length;
+  }, [displayRuns]);
+
+  const finishedCount = useMemo(() => {
+    return displayRuns.filter((j) => j.status === 'Finished' || j.status === 'Test Done').length;
+  }, [displayRuns]);
+
+  const activeElapsed = useMemo(() => {
+    const activeJobsList = displayRuns.filter((j) => j.status === 'Running' || j.status === 'Starting');
+    if (activeJobsList.length === 0) return 0;
+    return Math.max(...activeJobsList.map((j) => j.elapsed_secs || 0));
+  }, [displayRuns]);
+
+  const handleDismiss = (run_id: string) => {
+    setDismissedRunIds((prev) => [...prev, run_id]);
+  };
+
+  if (displayRuns.length === 0) {
     return null;
   }
 
+  const hasActiveRuns = activeCount > 0;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem', marginBottom: '1.25rem' }}>
-      {activeJobs.map((job) => (
-        <SingleWorkflowRunner
-          key={job.run_id}
-          job={job}
-          devices={devices}
-          onCancelJob={onCancelJob}
-        />
-      ))}
+    <div className={`workflow-master-card ${hasActiveRuns ? 'glow-master-parent' : ''}`}>
+      {/* Master Parent Accordion Header */}
+      <div
+        className="workflow-master-header"
+        onClick={() => setIsMasterOpen(!isMasterOpen)}
+        style={{
+          borderBottom: isMasterOpen ? '1px solid var(--border-subtle)' : 'none',
+          borderRadius: isMasterOpen ? 'var(--radius-lg) var(--radius-lg) 0 0' : 'var(--radius-lg)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="accordion-toggle-btn"
+            aria-label="Toggle master workflow runs"
+          >
+            {isMasterOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontSize: '1.2rem' }}>⚡</span>
+            <span style={{ fontSize: '0.9375rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '0.01em' }}>
+              WORKFLOW RUNS & LOGS
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+            {activeCount > 0 && (
+              <span className="badge badge-running badge-xs" style={{ fontWeight: 700 }}>
+                ⚡ {activeCount} Aktif Berjalan
+              </span>
+            )}
+            {finishedCount > 0 && (
+              <span className="badge badge-ready badge-xs">
+                ✓ {finishedCount} Selesai
+              </span>
+            )}
+            <span className="badge badge-neutral badge-xs">
+              {displayRuns.length} Total Run
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }} onClick={(e) => e.stopPropagation()}>
+          {activeCount > 0 && (
+            <span
+              className="mono-cell"
+              style={{
+                fontSize: '0.8125rem',
+                color: 'var(--accent-warning, #f59e0b)',
+                fontWeight: 700,
+                backgroundColor: 'var(--bg-card, rgba(255,255,255,0.04))',
+                padding: '0.2rem 0.55rem',
+                borderRadius: '4px',
+                border: '1px solid var(--border-color, rgba(255,255,255,0.08))'
+              }}
+            >
+              ⏱ {formatDuration(activeElapsed)}
+            </span>
+          )}
+          {dismissedRunIds.length > 0 && (
+            <button
+              className="btn btn-secondary btn-xs"
+              onClick={() => setDismissedRunIds([])}
+              title="Tampilkan kembali semua run yang ditutup"
+            >
+              Restore Closed Runs
+            </button>
+          )}
+          <span style={{ color: 'var(--text-muted)' }}>
+            {isMasterOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+          </span>
+        </div>
+      </div>
+
+      {/* Master Parent Accordion Body (contains individual Testrun Accordions) */}
+      {isMasterOpen && (
+        <div className="workflow-master-body">
+          {displayRuns.map((job) => (
+            <SingleWorkflowRunner
+              key={job.run_id}
+              job={job}
+              devices={devices}
+              onCancelJob={onCancelJob}
+              onDismiss={handleDismiss}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
+
+

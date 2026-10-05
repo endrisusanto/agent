@@ -12,23 +12,156 @@ use tokio::sync::mpsc;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
-use crate::laundry::resolve_zip_path;
+use crate::laundry::{is_cts_verifier_result, resolve_zip_path};
 use crate::scanner::{device_props, read_busy_registry, write_busy_registry};
 use crate::types::{BusyDevice, RunSuitePayload};
 
-pub static ACTIVE_RUN_PIDS: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static ACTIVE_RUN_PIDS: LazyLock<Mutex<HashMap<String, Vec<u32>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static CANCELLED_RUNS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+pub static STS_RUN_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+pub fn is_run_cancelled(run_id: &str) -> bool {
+    let set = CANCELLED_RUNS.lock().unwrap();
+    set.contains(run_id)
+}
+
+pub fn register_run_pid(run_id: &str, pid: u32) {
+    let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
+    map.entry(run_id.to_string()).or_default().push(pid);
+}
+
+pub fn unregister_run_pid(run_id: &str, pid: u32) {
+    let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
+    if let Some(list) = map.get_mut(run_id) {
+        list.retain(|&p| p != pid);
+        if list.is_empty() {
+            map.remove(run_id);
+        }
+    }
+}
 
 pub fn cancel_suite_run(run_id: &str) -> bool {
-    let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
-    if let Some(pid) = map.remove(run_id) {
-        // Kill parent process
-        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).output();
-        // Kill child process tree (java, tradefed, adb)
-        let _ = Command::new("pkill").arg("-9").arg("-P").arg(pid.to_string()).output();
-        true
-    } else {
-        false
+    {
+        let mut set = CANCELLED_RUNS.lock().unwrap();
+        set.insert(run_id.to_string());
     }
+    let pids = {
+        let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
+        map.remove(run_id).unwrap_or_default()
+    };
+    for pid in &pids {
+        terminate_process_tree(*pid);
+    }
+    // Force kill tradefed processes to ensure immediate stoppage
+    let _ = Command::new("pkill").args(["-9", "-f", "cts-tradefed"]).output();
+    let _ = Command::new("pkill").args(["-9", "-f", "gts-tradefed"]).output();
+    let _ = Command::new("pkill").args(["-9", "-f", "sts-tradefed"]).output();
+    true
+}
+
+
+fn find_real_adb() -> String {
+    if let Ok(output) = Command::new("which").arg("adb").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() && !path.contains(".gba-bin") {
+                return path;
+            }
+        }
+    }
+    for candidate in &["/usr/bin/adb", "/usr/local/bin/adb", "/opt/android-sdk/platform-tools/adb"] {
+        if Path::new(candidate).is_file() {
+            return candidate.to_string();
+        }
+    }
+    "adb".to_string()
+}
+
+pub fn create_adb_wrapper(root: &Path) -> Result<(), String> {
+    let gba_bin = root.join(".gba-bin");
+    fs::create_dir_all(&gba_bin).map_err(|err| err.to_string())?;
+    let real_adb = find_real_adb();
+    let wrapper_path = gba_bin.join("adb");
+    let content = format!(
+        "#!/usr/bin/env bash\nif [[ \"$*\" == *\"kill-server\"* ]]; then\n    exit 0\nfi\nexec {} \"$@\"\n",
+        real_adb
+    );
+    fs::write(&wrapper_path, content).map_err(|err| err.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(&wrapper_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&wrapper_path, perms);
+        }
+    }
+    Ok(())
+}
+
+pub fn prepare_devices(devices: &[String], log_tx: &mpsc::UnboundedSender<String>) {
+    let mut handles = Vec::new();
+    for serial in devices {
+        let serial = serial.clone();
+        let tx = log_tx.clone();
+        handles.push(std::thread::spawn(move || {
+            let _ = tx.send(format!("[prepare][{serial}] waking device"));
+            let run = |args: &[&str]| {
+                let mut cmd_args = vec!["-s", &serial];
+                cmd_args.extend_from_slice(args);
+                Command::new("adb").args(&cmd_args).output()
+            };
+            let _ = run(&["root"]);
+            std::thread::sleep(Duration::from_secs(1));
+            let _ = run(&["unroot"]);
+            let _ = run(&["wait-for-device"]);
+            let result = run(&[
+                "shell",
+                "settings put global stay_on_while_plugged_in 3; settings put secure block_usb_lock 0; wm dismiss-keyguard; input keyevent KEYCODE_WAKEUP; input keyevent KEYCODE_HOME",
+            ]);
+            match result {
+                Ok(_) => {
+                    let _ = tx.send(format!("[prepare][{serial}] ready"));
+                }
+                Err(err) => {
+                    let _ = tx.send(format!("[prepare][{serial}] skipped: {err}"));
+                }
+            }
+        }));
+    }
+    for handle in handles {
+        let _ = handle.join();
+    }
+}
+
+pub fn connect_wifi(serial: &str, ssid: &str, password: &str) -> Result<String, String> {
+    let _ = Command::new("adb").args(["-s", serial, "shell", "svc", "wifi", "enable"]).output();
+    std::thread::sleep(Duration::from_secs(1));
+    let output = if password.is_empty() {
+        Command::new("adb")
+            .args(["-s", serial, "shell", "cmd", "wifi", "connect-network", ssid, "open"])
+            .output()
+    } else {
+        Command::new("adb")
+            .args(["-s", serial, "shell", "cmd", "wifi", "connect-network", ssid, "wpa2", password])
+            .output()
+    }.map_err(|e| e.to_string())?;
+
+    let out_str = String::from_utf8_lossy(&output.stdout);
+    if out_str.to_lowercase().contains("failed") || out_str.to_lowercase().contains("error") {
+        Err(out_str.trim().to_string())
+    } else {
+        Ok(format!("wifi connect requested for \"{ssid}\" on {serial}"))
+    }
+}
+
+fn ensure_ghidra_for_sts(log_tx: &mpsc::UnboundedSender<String>) -> Result<(), String> {
+    let updater = Path::new("/home/endri-pro/Documents/ghidra/download_ghidra.sh");
+    if updater.is_file() {
+        let _ = log_tx.send("[AI Worker] Preparing Ghidra for STS...".to_string());
+        let _ = Command::new("bash").arg(updater).output();
+    }
+    Ok(())
 }
 
 pub struct RunOutcome {
@@ -49,7 +182,6 @@ struct DeviceInfoSources {
 
 struct LaundrySource {
     _temp: Arc<tempfile::TempDir>,
-    _extract_root: PathBuf,
     cts_results: Vec<PathBuf>,
     gts_results: Vec<PathBuf>,
     sts_results: Vec<PathBuf>,
@@ -75,38 +207,6 @@ pub fn execute_suite_run(
         return Err("No target devices specified for run".to_string());
     }
 
-    let start_time = Instant::now();
-    let _ = log_tx.send(format!("[AI Worker] =================================================="));
-    let _ = log_tx.send(format!("[AI Worker] Starting shard 1/1: {} devices={}", payload.test_type, serials.join(",")));
-    let _ = log_tx.send(format!("[AI Worker] Run ID: {}", run_id));
-
-    // 1. Mark devices as busy
-    let mut busy_registry = read_busy_registry(auto_root);
-    for s in &serials {
-        busy_registry.devices.insert(
-            s.clone(),
-            BusyDevice {
-                serial: s.clone(),
-                is_userdebug: !payload.userdebug_devices.is_empty(),
-                test_type: payload.test_type.clone(),
-                model: payload.target_model.clone().unwrap_or_else(|| "Android".to_string()),
-                pda: "".to_string(),
-                run_id: run_id.clone(),
-                started_at: chrono_timestamp(),
-                result_dir: None,
-                current_suite: Some(payload.test_type.clone()),
-            },
-        );
-    }
-    let _ = write_busy_registry(auto_root, &busy_registry);
-
-    let session_dir = auto_root.join("Results").join(&run_id);
-    let _ = fs::create_dir_all(&session_dir);
-    let log_dir = session_dir.join("logs");
-    let _ = fs::create_dir_all(&log_dir);
-
-    let _ = log_tx.send(format!("[AI Worker] Result directory: {}", session_dir.display()));
-
     let first_serial = serials.first().cloned().unwrap_or_default();
     let first_props = device_props(&first_serial).unwrap_or_default();
     let model = payload.target_model.clone()
@@ -117,6 +217,83 @@ pub fn execute_suite_run(
         .or_else(|| first_props.get("ro.build.display.id"))
         .cloned()
         .unwrap_or_else(|| "PDA".to_string());
+
+    let suffix = timestamp_compact();
+    let session_name = format!(
+        "{}_{}_{}_{}devs_{}_{}",
+        sanitize_name(&payload.test_type),
+        sanitize_name(&model),
+        sanitize_name(&pda),
+        serials.len(),
+        suffix,
+        sanitize_name(&run_id)
+    );
+
+    let session_dir = auto_root.join("Results").join(session_name);
+    let _ = fs::create_dir_all(&session_dir);
+    let log_dir = session_dir.join("Log");
+    let _ = fs::create_dir_all(&log_dir);
+    #[cfg(unix)]
+    let _ = symlink(&log_dir, session_dir.join("logs"));
+
+    // Pipe all logs to both the channel and session_dir/run.log
+    let run_log_path = session_dir.join("run.log");
+    let (inner_log_tx, mut inner_log_rx) = mpsc::unbounded_channel::<String>();
+    let outer_log_tx = log_tx;
+    let run_log_file = run_log_path.clone();
+    std::thread::spawn(move || {
+        while let Some(line) = inner_log_rx.blocking_recv() {
+            let timestamp = chrono_timestamp();
+            append_file_line(&run_log_file, &format!("{timestamp} {line}"));
+            let _ = outer_log_tx.send(line);
+        }
+    });
+    let log_tx = inner_log_tx;
+
+    let start_time = Instant::now();
+    let _ = log_tx.send(format!("[AI Worker] =================================================="));
+    let _ = log_tx.send(format!("[AI Worker] Starting shard 1/1: {} devices={}", payload.test_type, serials.join(",")));
+    let _ = log_tx.send(format!("[AI Worker] Run ID: {}", run_id));
+    let _ = log_tx.send(format!("[AI Worker] Result directory: {}", session_dir.display()));
+
+    // 1. Create ADB wrapper
+    if let Err(e) = create_adb_wrapper(auto_root) {
+        let _ = log_tx.send(format!("[AI Worker][WARN] Failed to create ADB wrapper: {e}"));
+    }
+
+    // 2. Mark devices as busy
+    let mut busy_registry = read_busy_registry(auto_root);
+    for s in &serials {
+        busy_registry.devices.insert(
+            s.clone(),
+            BusyDevice {
+                serial: s.clone(),
+                is_userdebug: !payload.userdebug_devices.is_empty(),
+                test_type: payload.test_type.clone(),
+                model: model.clone(),
+                pda: pda.clone(),
+                run_id: run_id.clone(),
+                started_at: chrono_timestamp(),
+                result_dir: Some(session_dir.display().to_string()),
+                current_suite: Some(payload.test_type.clone()),
+            },
+        );
+    }
+    let _ = write_busy_registry(auto_root, &busy_registry);
+
+    // 3. Connect WiFi if configured
+    if payload.wifi_enabled && !payload.wifi_ssid.is_empty() {
+        for s in &serials {
+            match connect_wifi(s, &payload.wifi_ssid, &payload.wifi_password) {
+                Ok(msg) => { let _ = log_tx.send(format!("[wifi][{s}] {msg}")); }
+                Err(err) => { let _ = log_tx.send(format!("[wifi][{s}] failed: {err}")); }
+            }
+        }
+    }
+
+    // 4. Wake & prepare devices
+    let _ = log_tx.send("[prepare] Waking and unlocking all target devices...".to_string());
+    prepare_devices(&serials, &log_tx);
 
     let collected_zips = Arc::new(Mutex::new(Vec::<String>::new()));
 
@@ -134,7 +311,7 @@ pub fn execute_suite_run(
                 run_laundry_normal_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
             }
         }
-        "Cuci SMR" | "SMR" => {
+        "Cuci SMR" => {
             run_cts_then_gts_flow(
                 auto_root,
                 &session_dir,
@@ -159,7 +336,7 @@ pub fn execute_suite_run(
                 &log_dir,
                 &payload.user_devices,
                 "ctssku",
-                "run gts --subplan variant",
+                "run gts-variant",
                 payload.timeout_secs,
                 &model,
                 &pda,
@@ -209,34 +386,201 @@ pub fn execute_suite_run(
                 &collected_zips,
             )?
         }
+        "SMR" => {
+            let sts_handle = if !payload.userdebug_devices.is_empty() {
+                let root_sts = auto_root.to_path_buf();
+                let session_sts = session_dir.to_path_buf();
+                let log_sts = log_dir.to_path_buf();
+                let devs_sts = payload.userdebug_devices.clone();
+                let timeout_sts = payload.timeout_secs;
+                let model_sts = model.clone();
+                let pda_sts = pda.clone();
+                let run_id_sts = run_id.clone();
+                let test_type_sts = payload.test_type.clone();
+                let log_tx_sts = log_tx.clone();
+                let stat_tx_sts = status_tx.clone();
+                let zips_sts = Arc::clone(&collected_zips);
+
+                Some(std::thread::spawn(move || {
+                    run_sts_flow(
+                        &root_sts,
+                        &session_sts,
+                        &log_sts,
+                        &devs_sts,
+                        timeout_sts,
+                        &model_sts,
+                        &pda_sts,
+                        &run_id_sts,
+                        &test_type_sts,
+                        &log_tx_sts,
+                        &stat_tx_sts,
+                        &zips_sts,
+                    )
+                }))
+            } else {
+                None
+            };
+
+            let cts_gts_code = if !payload.user_devices.is_empty() {
+                run_cts_then_gts_flow(
+                    auto_root,
+                    &session_dir,
+                    &log_dir,
+                    &payload.user_devices,
+                    "ctssmr",
+                    "run gts --subplan gtssmr",
+                    payload.timeout_secs,
+                    &model,
+                    &pda,
+                    &run_id,
+                    &payload.test_type,
+                    &log_tx,
+                    &status_tx,
+                    &collected_zips,
+                )?
+            } else {
+                0
+            };
+
+            let sts_code = if let Some(handle) = sts_handle {
+                handle.join().unwrap_or(Ok(1)).unwrap_or(1)
+            } else {
+                0
+            };
+
+            if cts_gts_code == 0 && sts_code == 0 { 0 } else { 1 }
+        }
         _ => {
-            run_generic_suite_flow(auto_root, &session_dir, &log_dir, payload, &run_id, &log_tx, &status_tx)?
+            return Err(format!("Unsupported test type: {}", payload.test_type));
         }
     };
 
     let elapsed = start_time.elapsed().as_secs();
 
-    // 2. Clear busy state
+    // 5. Clear busy state
     let mut busy_registry = read_busy_registry(auto_root);
     for s in &serials {
         busy_registry.devices.remove(s);
     }
     let _ = write_busy_registry(auto_root, &busy_registry);
 
-    let zips_list = collected_zips.lock().unwrap().clone();
+    let mut zips_list = collected_zips.lock().unwrap().clone();
+
+    // 6. Create overall consolidated result ZIP for this session
+    let results_root = session_dir.parent().unwrap_or(&session_dir);
+    let overall_zip_name = format!("{}.zip", session_dir.file_name().unwrap_or_default().to_string_lossy());
+    let overall_zip_path = results_root.join(&overall_zip_name);
+    let _ = log_tx.send(format!("[AI Worker] Creating overall result ZIP: {overall_zip_name}..."));
+    if let Err(e) = zip_directory(&session_dir, &overall_zip_path) {
+        let _ = log_tx.send(format!("[AI Worker] Warning: Failed to create overall ZIP: {e}"));
+    } else {
+        let _ = log_tx.send(format!("[AI Worker] Result ZIP preserved: {overall_zip_name}"));
+        if !zips_list.contains(&overall_zip_name) {
+            zips_list.insert(0, overall_zip_name);
+        }
+    }
+
     let _ = log_tx.send(format!("[AI Worker] Completed with exit={exit_code}. Result zips: [{}]", zips_list.join(", ")));
     let _ = log_tx.send(format!("[AI Worker] Finished exit={exit_code} result={}", session_dir.display()));
     let _ = status_tx.send((payload.test_type.clone(), if exit_code == 0 { "Test Done".to_string() } else { "Failed".to_string() }, elapsed));
+
+    let (real_pass, real_fail, real_total) = scan_run_summary(&session_dir);
+    let (final_pass, final_fail, final_total) = if real_total > 0 || real_pass > 0 || real_fail > 0 {
+        (real_pass, real_fail, real_total)
+    } else if exit_code == 0 {
+        (1, 0, 1)
+    } else {
+        (0, 1, 1)
+    };
 
     Ok(RunOutcome {
         exit_code,
         elapsed_secs: elapsed,
         result_dir: session_dir.to_string_lossy().to_string(),
         zip_files: zips_list,
-        total: 100,
-        passed: if exit_code == 0 { 100 } else { 0 },
-        failed: if exit_code == 0 { 0 } else { 1 },
+        total: final_total,
+        passed: final_pass,
+        failed: final_fail,
     })
+}
+
+pub fn scan_run_summary(session_dir: &Path) -> (u64, u64, u64) {
+    let mut total_passed = 0u64;
+    let mut total_failed = 0u64;
+    let mut total_tests = 0u64;
+    let mut found_any = false;
+
+    for entry in WalkDir::new(session_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() && entry.file_name() == "test_result.xml" {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                let p = crate::laundry::parse_xml_attr(&content, "pass").unwrap_or(0);
+                let f = crate::laundry::parse_xml_attr(&content, "failed").unwrap_or(0);
+                let m_total = crate::laundry::parse_xml_attr(&content, "modules_total").unwrap_or(0);
+                let m_done = crate::laundry::parse_xml_attr(&content, "modules_done").unwrap_or(0);
+
+                let pass_val = if p > 0 || f > 0 { p } else { m_done };
+                let fail_val = f;
+                let tot_val = if p + f > 0 { p + f } else { m_total };
+
+                total_passed += pass_val;
+                total_failed += fail_val;
+                total_tests += tot_val;
+                found_any = true;
+            }
+        }
+    }
+
+    if found_any {
+        (total_passed, total_failed, total_tests)
+    } else {
+        (0, 0, 0)
+    }
+}
+
+pub fn zip_directory(src_dir: &Path, dst_zip: &Path) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::{Read, Write};
+    use zip::write::FileOptions;
+    use zip::ZipWriter;
+
+    let file = File::create(dst_zip).map_err(|e| format!("Failed to create zip file: {e}"))?;
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    for entry in walkdir::WalkDir::new(src_dir).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path == dst_zip {
+            continue;
+        }
+        let rel_path = match path.strip_prefix(src_dir) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if rel_path.as_os_str().is_empty() {
+            continue;
+        }
+        if path.is_file() {
+            let mut f = match File::open(path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("Skipping file {:?}: {e}", path);
+                    continue;
+                }
+            };
+            if let Err(e) = zip.start_file(rel_path.to_string_lossy().to_string(), options) {
+                eprintln!("Zip start_file error: {e}");
+                continue;
+            }
+            let mut buffer = Vec::new();
+            if let Ok(_) = f.read_to_end(&mut buffer) {
+                let _ = zip.write_all(&buffer);
+            }
+        } else if path.is_dir() {
+            let _ = zip.add_directory(rel_path.to_string_lossy().to_string(), options);
+        }
+    }
+    zip.finish().map_err(|e| format!("Zip finish error: {e}"))?;
+    Ok(())
 }
 
 fn chrono_timestamp() -> String {
@@ -245,8 +589,7 @@ fn chrono_timestamp() -> String {
 }
 
 fn timestamp_compact() -> String {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    format!("{}", now.as_secs())
+    chrono_timestamp()
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -690,11 +1033,27 @@ fn suite_log_has_completion_marker(log_file: &Path) -> bool {
         content
             .lines()
             .rev()
-            .take(120)
-            .any(|line| line.contains("Result/Log Location") || line.contains("=============== Summary ==============="))
+            .take(60)
+            .any(|line| {
+                line.contains("Result/Log Location")
+                    || line.contains("=============== Summary ===============")
+                    || line.contains("=================== End ====================")
+                    || line.contains("All done")
+                    || line.contains("Saved test result to")
+            })
     } else {
         false
     }
+}
+
+pub fn update_device_busy_suite(auto_root: &Path, devices: &[String], suite_name: &str) {
+    let mut busy_registry = read_busy_registry(auto_root);
+    for s in devices {
+        if let Some(dev) = busy_registry.devices.get_mut(s) {
+            dev.current_suite = Some(format!("RUNNING {}", suite_name.to_uppercase()));
+        }
+    }
+    let _ = write_busy_registry(auto_root, &busy_registry);
 }
 
 fn run_suite_process(
@@ -723,9 +1082,13 @@ fn run_suite_process(
         .parent()
         .ok_or_else(|| format!("Invalid executable parent: {}", executable.display()))?;
 
+    let parent_auto = executable_dir.parent().and_then(|p| p.parent()).unwrap_or(executable_dir);
+    update_device_busy_suite(parent_auto, devices, suite);
+
     let mut command = Command::new(format!("./{executable_name}"));
     command
         .current_dir(executable_dir)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -735,31 +1098,31 @@ fn run_suite_process(
         command.env("PATH", format!("{}:{current_path}", gba_bin.display()));
     }
 
-    if via_pipe {
-        command.stdin(Stdio::piped());
-    } else {
-        command.args(suite_command.split_whitespace());
+    command.args(suite_command.split_whitespace());
+
+    if is_run_cancelled(run_id) {
+        return Ok(130);
     }
 
     let mut child = command
         .spawn()
         .map_err(|err| format!("Failed to start {suite}: {err}"))?;
     let pid = child.id();
-    {
-        let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
-        map.insert(run_id.to_string(), pid);
-    }
+    register_run_pid(run_id, pid);
     let _ = log_tx.send(format!("[AI Worker] {suite}: started pid={pid}"));
 
-    if via_pipe {
-        if let Some(mut stdin) = child.stdin.take() {
-            let cmd = suite_command.to_string();
-            std::thread::spawn(move || {
-                let _ = writeln!(stdin, "{cmd}");
-                std::thread::sleep(Duration::from_secs(timeout_secs));
-            });
+    let is_done = Arc::new(AtomicBool::new(false));
+    let is_done_stdin = Arc::clone(&is_done);
+    let mut stdin_holder = child.stdin.take();
+    std::thread::spawn(move || {
+        while !is_done_stdin.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(500));
         }
-    }
+        if let Some(mut stdin) = stdin_holder.take() {
+            let _ = writeln!(stdin, "exit");
+            let _ = stdin.flush();
+        }
+    });
 
     let log_tx_err = log_tx.clone();
     let log_file_err = log_file.to_path_buf();
@@ -795,7 +1158,7 @@ fn run_suite_process(
                 if line.contains("Result/Log Location")
                     || line.contains("=============== Summary ===============")
                     || line.contains("=================== End ====================")
-                    || line.contains("All done")
+                    || line.contains("Saved test result to")
                     || (line.contains("run_command session_id:") && line.contains("result: COMPLETED"))
                 {
                     is_completed_clone.store(true, Ordering::SeqCst);
@@ -807,12 +1170,20 @@ fn run_suite_process(
     let mut code = 0;
     let started = Instant::now();
     loop {
+        if is_run_cancelled(run_id) {
+            let _ = log_tx.send(format!("[AI Worker] {suite}: run cancelled, terminating pid={pid}"));
+            terminate_process_tree(pid);
+            let _ = child.wait();
+            code = 130;
+            break;
+        }
+
         if let Ok(Some(status)) = child.try_wait() {
             code = status.code().unwrap_or(0);
             break;
         }
 
-        if is_completed.load(Ordering::SeqCst) || suite_log_has_completion_marker(log_file) {
+        if started.elapsed().as_secs() > 5 && (is_completed.load(Ordering::SeqCst) || suite_log_has_completion_marker(log_file)) {
             let _ = log_tx.send(format!("[AI Worker] {suite}: completion marker detected; closing tradefed console."));
             std::thread::sleep(Duration::from_millis(500));
             terminate_process_tree(pid);
@@ -832,10 +1203,8 @@ fn run_suite_process(
         std::thread::sleep(Duration::from_secs(1));
     }
 
-    {
-        let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
-        map.remove(run_id);
-    }
+    is_done.store(true, Ordering::SeqCst);
+    unregister_run_pid(run_id, pid);
 
     let _ = log_tx.send(format!("[AI Worker] {suite}: tradefed finished with code {code}"));
     Ok(code)
@@ -1000,14 +1369,15 @@ fn run_tradefed_console_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    if is_run_cancelled(run_id) {
+        return Ok(String::new());
+    }
+
     let mut child = command
         .spawn()
         .map_err(|err| format!("Failed to start {suite} console: {err}"))?;
     let pid = child.id();
-    {
-        let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
-        map.insert(run_id.to_string(), pid);
-    }
+    register_run_pid(run_id, pid);
     let _ = log_tx.send(format!("[AI Worker] {suite}: console pid={pid} command={console_command}"));
 
     let output = Arc::new(Mutex::new(String::new()));
@@ -1049,6 +1419,12 @@ fn run_tradefed_console_command(
 
     let started = Instant::now();
     loop {
+        if is_run_cancelled(run_id) {
+            terminate_process_tree(pid);
+            let _ = child.wait();
+            break;
+        }
+
         if let Ok(Some(_)) = child.try_wait() {
             break;
         }
@@ -1069,10 +1445,7 @@ fn run_tradefed_console_command(
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    {
-        let mut map = ACTIVE_RUN_PIDS.lock().unwrap();
-        map.remove(run_id);
-    }
+    unregister_run_pid(run_id, pid);
 
     let result_str = output.lock().map(|t| t.clone()).unwrap_or_default();
     Ok(result_str)
@@ -1089,6 +1462,9 @@ fn resolve_retry_session_id(
     let _ = log_tx.send(format!("[AI Worker] {suite}: resolving retry session for {result_dir_name}"));
     let mut last_output = String::new();
     for attempt in 1..=5 {
+        if is_run_cancelled(run_id) {
+            return Err("Run cancelled".to_string());
+        }
         let output = run_tradefed_console_command(suite, executable, "l r", log_file, 45, run_id, log_tx)?;
         if let Some(session_id) = parse_retry_session_id(&output, result_dir_name) {
             let _ = log_tx.send(format!("[AI Worker] {suite}: matched retry session {session_id} for {result_dir_name}"));
@@ -1123,6 +1499,10 @@ fn run_laundry_retries(
 ) -> Result<Vec<i32>, String> {
     let mut codes = Vec::new();
     for (index, source) in source_results.iter().enumerate() {
+        if is_run_cancelled(run_id) {
+            let _ = log_tx.send(format!("[AI Worker] {suite}: run cancelled, aborting remaining retries."));
+            break;
+        }
         let suite_root = suite_root_for_laundry_result(root, suite, devices, source)?;
         let suite_workspace = suite_workspace(root, &suite_root, run_id)?;
         let tradefed_name = match suite {
@@ -1266,6 +1646,10 @@ fn scan_laundry_results(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf
             continue;
         };
 
+        if is_cts_verifier_result(&entry.path(), &parent) {
+            continue;
+        }
+
         let mut suite_type = None;
         if let Some((name, _, _)) = get_suite_info_from_xml(&entry.path()) {
             suite_type = classify_suite_name(&name);
@@ -1299,16 +1683,99 @@ fn scan_laundry_results(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf
                 }
             }
             _ => {
-                if !cts.contains(&parent) {
-                    cts.push(parent);
-                }
+                // Unknown suite: skipped, do NOT fallback to CTS
             }
         }
     }
     (cts, gts, sts)
 }
 
+fn verify_laundry_suite_tools(
+    root: &Path,
+    devices: &[String],
+    source: &LaundrySource,
+    suites: &[&str],
+    log_tx: &mpsc::UnboundedSender<String>,
+) -> Result<(), String> {
+    for suite in suites {
+        let needed = match *suite {
+            "CTS" => !source.cts_results.is_empty(),
+            "GTS" => !source.cts_results.is_empty() || !source.gts_results.is_empty(),
+            "STS" => !source.sts_results.is_empty(),
+            _ => false,
+        };
+        if !needed {
+            let _ = log_tx.send(format!("[preflight] {suite}: skipped; not found in laundry zip."));
+            continue;
+        }
+        let result_dirs = match *suite {
+            "CTS" => &source.cts_results,
+            "GTS" => &source.gts_results,
+            "STS" => &source.sts_results,
+            _ => continue,
+        };
+
+        if result_dirs.is_empty() {
+            let suite_root = suite_root_for_device(root, suite, devices)?;
+            let tool_name = match *suite {
+                "CTS" => "cts-tradefed",
+                "GTS" => "gts-tradefed",
+                "STS" => "sts-tradefed",
+                _ => "tradefed",
+            };
+            let tool = suite_root.join("tools").join(tool_name);
+            if !tool.is_file() {
+                return Err(format!("{suite} tool required but not found: {}", tool.display()));
+            }
+            let _ = log_tx.send(format!("[preflight] {suite}: tool ready {}", tool.display()));
+            continue;
+        }
+
+        for dir in result_dirs {
+            let suite_root = suite_root_for_laundry_result(root, suite, devices, dir)?;
+            let tool_name = match *suite {
+                "CTS" => "cts-tradefed",
+                "GTS" => "gts-tradefed",
+                "STS" => "sts-tradefed",
+                _ => "tradefed",
+            };
+            let tool = suite_root.join("tools").join(tool_name);
+            if !tool.is_file() {
+                return Err(format!("{suite} tool required by laundry zip but not found: {}", tool.display()));
+            }
+            let _ = log_tx.send(format!("[preflight] {suite}: tool ready {}", tool.display()));
+
+            let version_txt = suite_root.join("tools/version.txt");
+            let local_version = if version_txt.is_file() {
+                fs::read_to_string(&version_txt)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            let xml_path = dir.join("test_result.xml");
+            if xml_path.is_file() {
+                if let Some((name, version, build)) = get_suite_info_from_xml(&xml_path) {
+                    if !local_version.is_empty() && !build.is_empty() && build != local_version {
+                        let _ = log_tx.send(format!(
+                            "[preflight][WARN] {suite}: version mismatch (laundry: {name} {version} / {build}, local tool: {local_version}). Proceeding with available tools."
+                        ));
+                    } else {
+                        let _ = log_tx.send(format!(
+                            "[preflight] {suite}: version checked and matched (laundry: {name} {version} / {build}, local tool: {local_version})"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn prepare_laundry_source(
+    auto_root: &Path,
+    devices: &[String],
     payload: &RunSuitePayload,
     session_dir: &Path,
     log_tx: &mpsc::UnboundedSender<String>,
@@ -1349,26 +1816,47 @@ fn prepare_laundry_source(
     // Filter by selected laundry results if specified
     if !payload.selected_laundry_results.is_empty() {
         let sel: HashSet<String> = payload.selected_laundry_results.iter().cloned().collect();
+        let selected_dirs: HashSet<String> = payload.selected_laundry_rows.iter().filter_map(|r| {
+            r.get("result_dir").and_then(|v| v.as_str()).map(|s| s.to_string())
+        }).collect();
+
         let filter_fn = |p: &PathBuf| -> bool {
             let dirname = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-            sel.iter().any(|s| s.contains(dirname) || dirname.contains(s))
+            sel.iter().any(|s| s.contains(dirname) || dirname.contains(s)) ||
+            selected_dirs.iter().any(|d| d.contains(dirname) || dirname.contains(d))
         };
-        cts_results.retain(filter_fn);
-        gts_results.retain(filter_fn);
-        sts_results.retain(filter_fn);
+
+        let cts_matches: Vec<_> = cts_results.iter().filter(|p| filter_fn(p)).cloned().collect();
+        if !cts_matches.is_empty() {
+            cts_results = cts_matches;
+        }
+        let gts_matches: Vec<_> = gts_results.iter().filter(|p| filter_fn(p)).cloned().collect();
+        if !gts_matches.is_empty() {
+            gts_results = gts_matches;
+        }
+        let sts_matches: Vec<_> = sts_results.iter().filter(|p| filter_fn(p)).cloned().collect();
+        if !sts_matches.is_empty() {
+            sts_results = sts_matches;
+        }
+
         let _ = log_tx.send(format!(
-            "[AI Worker] Custom laundry selection applied: {} result(s)",
-            cts_results.len() + gts_results.len() + sts_results.len()
+            "[AI Worker] Custom laundry selection applied: CTS={} GTS={} STS={}",
+            cts_results.len(),
+            gts_results.len(),
+            sts_results.len()
         ));
     }
 
-    Ok(LaundrySource {
+    let source = LaundrySource {
         _temp: temp.clone(),
-        _extract_root: temp.path().to_path_buf(),
         cts_results,
         gts_results,
         sts_results,
-    })
+    };
+
+    let _ = verify_laundry_suite_tools(auto_root, devices, &source, &["CTS", "GTS", "STS"], log_tx);
+
+    Ok(source)
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1387,9 +1875,13 @@ fn run_laundry_smr_flow(
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
     collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
-    let source = prepare_laundry_source(payload, session_dir, log_tx)?;
-    let has_cts_or_gts = !source.cts_results.is_empty() || !source.gts_results.is_empty();
     let mut cts_gts_devices = payload.user_devices.clone();
+    if payload.userdebug_devices.is_empty() && cts_gts_devices.is_empty() {
+        return Err("No devices specified for Laundry SMR".to_string());
+    }
+
+    let source = prepare_laundry_source(auto_root, &cts_gts_devices, payload, session_dir, log_tx)?;
+    let has_cts_or_gts = !source.cts_results.is_empty() || !source.gts_results.is_empty();
 
     if source.sts_results.is_empty() {
         for d in &payload.userdebug_devices {
@@ -1421,6 +1913,8 @@ fn run_laundry_smr_flow(
         let zips_sts = Arc::clone(collected_zips);
 
         Some(std::thread::spawn(move || {
+            let _sts_guard = STS_RUN_LOCK.lock().unwrap();
+            let _ = ensure_ghidra_for_sts(&log_tx_sts);
             run_laundry_retries(
                 &root_sts,
                 &session_sts,
@@ -1445,6 +1939,9 @@ fn run_laundry_smr_flow(
 
     // 2. If CTS/GTS devices exist: Initial GTS for Property DeviceInfo -> CTS Retry -> GTS Retry
     if !cts_gts_devices.is_empty() && has_cts_or_gts {
+        if is_run_cancelled(run_id) {
+            return Ok(130);
+        }
         let _ = log_tx.send("[AI Worker] Laundry (SMR): initial GTS gtsmr run.".to_string());
         let deviceinfo = run_laundry_initial_gts(
             auto_root,
@@ -1459,6 +1956,10 @@ fn run_laundry_smr_flow(
             log_tx,
             status_tx,
         )?;
+
+        if is_run_cancelled(run_id) {
+            return Ok(130);
+        }
 
         if !source.cts_results.is_empty() {
             let _ = log_tx.send(format!("[AI Worker] CTS: {} result(s) queued for retry; 1 with PropertyDeviceInfo will be replaced.", source.cts_results.len()));
@@ -1485,6 +1986,10 @@ fn run_laundry_smr_flow(
                     exit_codes.push(1);
                 }
             }
+        }
+
+        if is_run_cancelled(run_id) {
+            return Ok(130);
         }
 
         if !source.gts_results.is_empty() {
@@ -1551,7 +2056,11 @@ fn run_laundry_normal_flow(
         }
     }
     let devices = if !all_devices.is_empty() { &all_devices } else { &payload.user_devices };
-    let source = prepare_laundry_source(payload, session_dir, log_tx)?;
+    let source = prepare_laundry_source(auto_root, devices, payload, session_dir, log_tx)?;
+
+    if is_run_cancelled(run_id) {
+        return Ok(130);
+    }
 
     let _ = log_tx.send("[AI Worker] Laundry (Normal/SKU): initial GTS property run.".to_string());
     let deviceinfo = run_laundry_initial_gts(
@@ -1567,6 +2076,10 @@ fn run_laundry_normal_flow(
         log_tx,
         status_tx,
     )?;
+
+    if is_run_cancelled(run_id) {
+        return Ok(130);
+    }
 
     let mut exit_codes = Vec::new();
     if !source.cts_results.is_empty() {
@@ -1589,6 +2102,10 @@ fn run_laundry_normal_flow(
             collected_zips,
         )?;
         exit_codes.extend(cts_codes);
+    }
+
+    if is_run_cancelled(run_id) {
+        return Ok(130);
     }
 
     if !source.gts_results.is_empty() {
@@ -1681,6 +2198,10 @@ fn run_cts_then_gts_flow(
         let _ = log_tx.send("[AI Worker] CTS returned non-zero; GTS will still be attempted.".to_string());
     }
 
+    if is_run_cancelled(run_id) {
+        return Ok(130);
+    }
+
     let gts_root = suite_root_for_device(auto_root, "GTS", devices)?;
     let gts_workspace = suite_workspace(auto_root, &gts_root, run_id)?;
     let gts_exe = gts_workspace.join("tools/gts-tradefed");
@@ -1743,6 +2264,9 @@ fn run_sts_flow(
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
     collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
+    let _sts_guard = STS_RUN_LOCK.lock().unwrap();
+    let _ = ensure_ghidra_for_sts(log_tx);
+
     let sts_root = suite_root_for_device(auto_root, "STS", devices)?;
     let sts_workspace = suite_workspace(auto_root, &sts_root, run_id)?;
     let sts_exe = sts_workspace.join("tools/sts-tradefed");
@@ -1796,55 +2320,4 @@ fn run_sts_flow(
     );
 
     Ok(code)
-}
-
-fn run_generic_suite_flow(
-    auto_root: &Path,
-    _session_dir: &Path,
-    log_dir: &Path,
-    payload: &RunSuitePayload,
-    run_id: &str,
-    log_tx: &mpsc::UnboundedSender<String>,
-    status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
-) -> Result<i32, String> {
-    let serials = if !payload.user_devices.is_empty() {
-        &payload.user_devices
-    } else {
-        &payload.userdebug_devices
-    };
-
-    let is_sts = payload.test_type.to_uppercase().contains("STS");
-    let is_gts = payload.test_type.to_uppercase().contains("GTS");
-    let suite_sub = if is_sts { "STS" } else if is_gts { "GTS" } else { "CTS" };
-
-    let suite_root = suite_root_for_device(auto_root, suite_sub, serials)?;
-    let suite_ws = suite_workspace(auto_root, &suite_root, run_id)?;
-    let tradefed_name = if is_sts { "sts-tradefed" } else if is_gts { "gts-tradefed" } else { "cts-tradefed" };
-    let exe = suite_ws.join("tools").join(tradefed_name);
-
-    if !exe.is_file() {
-        return Err(format!("Tradefed executable not found: {}", exe.display()));
-    }
-
-    let cmd = format!(
-        "run {} --shard-count {}{}",
-        suite_sub.to_lowercase(),
-        serials.len(),
-        serial_args(serials)
-    );
-    let log_file = log_dir.join(format!("{}_{}devs.log", suite_sub.to_lowercase(), serials.len()));
-
-    run_suite_process(
-        suite_sub,
-        serials,
-        &exe,
-        &cmd,
-        true,
-        &log_file,
-        payload.timeout_secs,
-        run_id,
-        &payload.test_type,
-        log_tx,
-        status_tx,
-    )
 }

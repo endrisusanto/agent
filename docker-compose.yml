@@ -9,6 +9,9 @@ services:
       - "${PORT:-4010}:4000"
     volumes:
       - /home/endri-pro/Downloads/CUCIAN:/cucian:ro
+      - /run/media/endri-pro/BINARY_HDD/AUTO/Results:/run/media/endri-pro/BINARY_HDD/AUTO/Results:ro
+      - /run/media/endri-pro/BINARY_HDD/AUTO:/auto:ro
     environment:
       - PORT=4000
+      - RESULTS_DIR=/run/media/endri-pro/BINARY_HDD/AUTO/Results
       - NODE_ENV=production

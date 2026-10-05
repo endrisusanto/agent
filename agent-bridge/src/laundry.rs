@@ -30,17 +30,7 @@ pub fn resolve_zip_path(zip_path: &str) -> Option<PathBuf> {
         }
     }
 
-    // 3. Check all user directories in /home
-    if let Ok(entries) = std::fs::read_dir("/home") {
-        for entry in entries.flatten() {
-            let candidate = entry.path().join("Downloads").join("CUCIAN").join(filename.as_ref());
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    // 4. Known directories
+    // 3. Known directories
     for dir in &["/home/endri-pro/Downloads/CUCIAN", "/cucian", "/tmp/CUCIAN"] {
         let candidate = PathBuf::from(dir).join(filename.as_ref());
         if candidate.is_file() {
@@ -49,6 +39,20 @@ pub fn resolve_zip_path(zip_path: &str) -> Option<PathBuf> {
     }
 
     None
+}
+
+pub fn is_cts_verifier_result(xml_path: &Path, result_dir: &Path) -> bool {
+    let dir_str = result_dir.display().to_string().to_lowercase();
+    if dir_str.contains("verifier") || dir_str.contains("ctsv") || dir_str.contains("cts_verifier") || dir_str.contains("cts-v") {
+        return true;
+    }
+    if let Ok(content) = std::fs::read_to_string(xml_path) {
+        let name = parse_xml_string_attr(&content, "suite_name").unwrap_or_default().to_lowercase();
+        if name.contains("verifier") || name.contains("ctsv") {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn analyze_laundry_zip(zip_path: &str) -> Result<Vec<LaundryResultInfo>, String> {
@@ -115,22 +119,32 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
     for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
         if entry.file_name() == "test_result.xml" {
             let xml_path = entry.path();
+            let parent_dir = match xml_path.parent() {
+                Some(p) => p,
+                None => continue,
+            };
+
+            if is_cts_verifier_result(xml_path, parent_dir) {
+                continue;
+            }
+
             if let Ok(content) = std::fs::read_to_string(xml_path) {
                 let parsed_suite_name = parse_xml_string_attr(&content, "suite_name").unwrap_or_default();
-                let suite = classify_suite(&parsed_suite_name)
-                    .or_else(|| {
+                let suite = match classify_suite(&parsed_suite_name) {
+                    Some(s) => s,
+                    None => {
                         let path_str = xml_path.to_string_lossy().to_lowercase();
                         if path_str.contains("gts") {
-                            Some("GTS".to_string())
+                            "GTS".to_string()
                         } else if path_str.contains("sts") {
-                            Some("STS".to_string())
+                            "STS".to_string()
                         } else if path_str.contains("cts") {
-                            Some("CTS".to_string())
+                            "CTS".to_string()
                         } else {
-                            None
+                            continue;
                         }
-                    })
-                    .unwrap_or_else(|| "CTS".to_string());
+                    }
+                };
 
                 let parsed_model = parse_xml_string_attr(&content, "build_model")
                     .or_else(|| parse_xml_string_attr(&content, "build_device"))
@@ -332,7 +346,7 @@ fn extract_model_from_name(filename: &str) -> Option<String> {
     None
 }
 
-fn parse_xml_attr(content: &str, attr: &str) -> Option<u64> {
+pub fn parse_xml_attr(content: &str, attr: &str) -> Option<u64> {
     let pattern = format!("{attr}=\"");
     if let Some(start) = content.find(&pattern) {
         let rest = &content[start + pattern.len()..];
@@ -343,7 +357,7 @@ fn parse_xml_attr(content: &str, attr: &str) -> Option<u64> {
     None
 }
 
-fn parse_xml_string_attr(content: &str, attr: &str) -> Option<String> {
+pub fn parse_xml_string_attr(content: &str, attr: &str) -> Option<String> {
     let pattern = format!("{attr}=\"");
     if let Some(start) = content.find(&pattern) {
         let rest = &content[start + pattern.len()..];

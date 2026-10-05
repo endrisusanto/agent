@@ -98,6 +98,7 @@ export function useFleetWebSocket() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const logsByRunIdRef = useRef<Map<string, string[]>>(new Map());
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -116,25 +117,59 @@ export function useFleetWebSocket() {
       try {
         const msg = JSON.parse(event.data);
         switch (msg.type) {
-          case 'FLEET_STATE':
+          case 'FLEET_STATE': {
             setBridges(msg.bridges || []);
             setDevices(msg.devices || []);
-            setActiveJobs(msg.activeJobs || []);
-            setJobHistory(msg.jobHistory || []);
-            break;
 
-          case 'LOG_LINE':
-            setActiveJobs((prev) =>
-              prev.map((job) => {
-                if (job.run_id === msg.run_id) {
-                  const updatedLogs = [...job.recentLogs, msg.line];
-                  if (updatedLogs.length > 500) updatedLogs.shift();
-                  return { ...job, recentLogs: updatedLogs };
-                }
-                return job;
-              })
-            );
+            const enrichedActive: ActiveJobItem[] = (msg.activeJobs || []).map((j: ActiveJobItem) => {
+              const cached = logsByRunIdRef.current.get(j.run_id) || [];
+              const raw = Array.isArray(j.recentLogs) ? j.recentLogs : [];
+              const merged = cached.length > raw.length ? cached : raw;
+              logsByRunIdRef.current.set(j.run_id, merged);
+              return { ...j, recentLogs: merged };
+            });
+
+            const enrichedHistory: ActiveJobItem[] = (msg.jobHistory || []).map((j: ActiveJobItem) => {
+              const cached = logsByRunIdRef.current.get(j.run_id) || [];
+              const raw = Array.isArray(j.recentLogs) ? j.recentLogs : [];
+              const merged = cached.length > raw.length ? cached : raw;
+              logsByRunIdRef.current.set(j.run_id, merged);
+              return { ...j, recentLogs: merged };
+            });
+
+            setActiveJobs(enrichedActive);
+            setJobHistory(enrichedHistory);
             break;
+          }
+
+          case 'LOG_LINE': {
+            const { run_id, line } = msg;
+            if (run_id && line) {
+              const existing = logsByRunIdRef.current.get(run_id) || [];
+              existing.push(line);
+              if (existing.length > 2000) existing.shift();
+              logsByRunIdRef.current.set(run_id, existing);
+
+              setActiveJobs((prev) =>
+                prev.map((job) => {
+                  if (job.run_id === run_id) {
+                    return { ...job, recentLogs: [...existing] };
+                  }
+                  return job;
+                })
+              );
+
+              setJobHistory((prev) =>
+                prev.map((job) => {
+                  if (job.run_id === run_id) {
+                    return { ...job, recentLogs: [...existing] };
+                  }
+                  return job;
+                })
+              );
+            }
+            break;
+          }
 
           case 'LAUNDRY_ANALYSIS_RESULT':
             setLaundryAnalysis({
@@ -203,6 +238,22 @@ export function useFleetWebSocket() {
     }
   }, []);
 
+  const deleteHistoryItem = useCallback((run_id: string) => {
+    setJobHistory((prev) => prev.filter((j) => j.run_id !== run_id));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'EXEC_DELETE_HISTORY_ITEM', run_id }));
+    }
+    fetch(`/api/history/${encodeURIComponent(run_id)}`, { method: 'DELETE' }).catch(() => {});
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setJobHistory([]);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'EXEC_CLEAR_HISTORY' }));
+    }
+    fetch('/api/history', { method: 'DELETE' }).catch(() => {});
+  }, []);
+
   return {
     isConnected,
     bridges,
@@ -215,6 +266,8 @@ export function useFleetWebSocket() {
     cancelRun,
     resetBusy,
     setDeviceLamp,
-    analyzeLaundry
+    analyzeLaundry,
+    deleteHistoryItem,
+    clearHistory
   };
 }

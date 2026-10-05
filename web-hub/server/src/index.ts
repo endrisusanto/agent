@@ -89,18 +89,19 @@ export interface ActiveJob {
 import fs from 'fs';
 
 function extractModelFromFilename(filename: string): string | undefined {
-  const base = filename.replace(/\.zip$/i, '');
-  const firstToken = base.split('_')[0] || base;
-  if (/^sm-/i.test(firstToken)) {
-    return firstToken.toUpperCase();
+  const smMatch = filename.match(/\b(SM-[A-Za-z0-9]+)\b/i) || filename.match(/(SM-[A-Za-z0-9]+)/i);
+  if (smMatch && smMatch[1]) {
+    return smMatch[1].toUpperCase();
   }
-  const match = firstToken.match(/^[A-Za-z0-9]+/);
-  if (match && match[0].length >= 4) {
-    const raw = match[0].toUpperCase();
-    if (raw.startsWith('A') || raw.startsWith('S') || raw.startsWith('F') || raw.startsWith('M') || raw.startsWith('X') || raw.startsWith('T')) {
-      return `SM-${raw}`;
+  const base = filename.replace(/\.zip$/i, '');
+  const tokens = base.split(/[_/\-\s]+/);
+  for (const token of tokens) {
+    if (/^[A-Za-z0-9]{4,}$/.test(token)) {
+      const raw = token.toUpperCase();
+      if (/^[ASFMXT][0-9]{3}[A-Z0-9]*$/.test(raw)) {
+        return `SM-${raw}`;
+      }
     }
-    return raw;
   }
   return undefined;
 }
@@ -185,29 +186,223 @@ app.get('/api/fleet/status', (_req, res) => {
   });
 });
 
+function parseRunBatchMetadata(batchName: string) {
+  const model = extractModelFromFilename(batchName);
+  let plan = 'Normal';
+  if (batchName.includes('_SMR_') || batchName.includes('SMR')) plan = 'SMR';
+  else if (batchName.includes('_SKU_') || batchName.includes('SKU')) plan = 'SKU';
+  else if (batchName.includes('STS')) plan = 'STS';
+  else if (batchName.includes('GTS')) plan = 'GTS';
+
+  const devsMatch = batchName.match(/(\d+)devs/);
+  const devsCount = devsMatch ? parseInt(devsMatch[1], 10) : 1;
+
+  return { model, plan, devsCount };
+}
+
+function scanBatchSummary(targetPath: string): { total: number; passed: number; failed: number } | undefined {
+  try {
+    if (fs.existsSync(targetPath)) {
+      if (fs.statSync(targetPath).isDirectory()) {
+        const findXml = (dir: string): string | null => {
+          const files = fs.readdirSync(dir);
+          for (const f of files) {
+            const full = path.join(dir, f);
+            if (f === 'test_result.xml') return full;
+            if (fs.statSync(full).isDirectory()) {
+              const nested = findXml(full);
+              if (nested) return nested;
+            }
+          }
+          return null;
+        };
+        const xmlFile = findXml(targetPath);
+        if (xmlFile && fs.existsSync(xmlFile)) {
+          const content = fs.readFileSync(xmlFile, 'utf8');
+          const passMatch = content.match(/pass="(\d+)"/i) || content.match(/passed="(\d+)"/i);
+          const failMatch = content.match(/failed="(\d+)"/i) || content.match(/fail="(\d+)"/i);
+          const totalMatch = content.match(/total="(\d+)"/i) || content.match(/tests="(\d+)"/i);
+          if (passMatch || failMatch) {
+            const passed = passMatch ? parseInt(passMatch[1], 10) : 0;
+            const failed = failMatch ? parseInt(failMatch[1], 10) : 0;
+            const total = totalMatch ? parseInt(totalMatch[1], 10) : (passed + failed);
+            return { total, passed, failed };
+          }
+        }
+      }
+    }
+  } catch (_) {}
+  return undefined;
+}
+
+// REST: Result ZIP List Endpoint (Grouped by Overall Run Batch)
+app.get('/api/results/list', (_req, res) => {
+  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  const zips: Array<{
+    filename: string;
+    path: string;
+    sizeBytes: number;
+    modifiedAt: number;
+    model?: string;
+    plan?: string;
+    devsCount?: number;
+    run_batch: string;
+    subFilesCount?: number;
+    summary?: { total: number; passed: number; failed: number };
+  }> = [];
+
+  try {
+    if (fs.existsSync(resultsDir)) {
+      const entries = fs.readdirSync(resultsDir, { withFileTypes: true });
+      const seenBatches = new Set<string>();
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const batchName = entry.name;
+          if (seenBatches.has(batchName)) continue;
+          seenBatches.add(batchName);
+
+          const subDir = path.join(resultsDir, batchName);
+          const zipCandidate = path.join(resultsDir, `${batchName}.zip`);
+          let sizeBytes = 0;
+          let modifiedAt = 0;
+          let subFilesCount = 0;
+
+          if (fs.existsSync(zipCandidate) && fs.statSync(zipCandidate).isFile()) {
+            const zStat = fs.statSync(zipCandidate);
+            sizeBytes = zStat.size;
+            modifiedAt = zStat.mtimeMs;
+          } else {
+            try {
+              const subFiles = fs.readdirSync(subDir);
+              subFilesCount = subFiles.length;
+              const dStat = fs.statSync(subDir);
+              modifiedAt = dStat.mtimeMs;
+              for (const f of subFiles) {
+                try {
+                  const fStat = fs.statSync(path.join(subDir, f));
+                  sizeBytes += fStat.size;
+                  if (fStat.mtimeMs > modifiedAt) modifiedAt = fStat.mtimeMs;
+                } catch (_) {}
+              }
+            } catch (_) {}
+          }
+
+          const meta = parseRunBatchMetadata(batchName);
+          const effectivePath = fs.existsSync(zipCandidate) ? zipCandidate : subDir;
+          const summary = scanBatchSummary(subDir);
+          zips.push({
+            filename: `${batchName}.zip`,
+            path: effectivePath,
+            sizeBytes,
+            modifiedAt,
+            model: meta.model,
+            plan: meta.plan,
+            devsCount: meta.devsCount,
+            run_batch: batchName,
+            subFilesCount,
+            summary
+          });
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.zip')) {
+          const baseName = entry.name.replace(/\.zip$/i, '');
+          if (!seenBatches.has(baseName)) {
+            seenBatches.add(baseName);
+            const fullPath = path.join(resultsDir, entry.name);
+            const stat = fs.statSync(fullPath);
+            const meta = parseRunBatchMetadata(entry.name);
+            const matchingDir = path.join(resultsDir, baseName);
+            const summary = fs.existsSync(matchingDir) ? scanBatchSummary(matchingDir) : undefined;
+            zips.push({
+              filename: entry.name,
+              path: fullPath,
+              sizeBytes: stat.size,
+              modifiedAt: stat.mtimeMs,
+              model: meta.model,
+              plan: meta.plan,
+              devsCount: meta.devsCount,
+              run_batch: baseName,
+              summary
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Hub] Error scanning Results directory:', err);
+  }
+
+  zips.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  res.json({ zips });
+});
+
+// REST: Delete Single Execution History Item
+app.delete('/api/history/:run_id', (req, res) => {
+  const { run_id } = req.params;
+  const idx = jobHistory.findIndex((j) => j.run_id === run_id);
+  if (idx !== -1) {
+    jobHistory.splice(idx, 1);
+    broadcastFleetState();
+    return res.json({ success: true, deleted: run_id });
+  }
+  return res.status(404).json({ error: 'Run ID not found' });
+});
+
+// REST: Clear All Execution History
+app.delete('/api/history', (_req, res) => {
+  jobHistory.length = 0;
+  broadcastFleetState();
+  return res.json({ success: true, message: 'Execution history cleared' });
+});
+
 // REST: Result ZIP Download Endpoint
 app.get('/api/results/download', (req, res) => {
+  const directPath = (req.query.path as string) || '';
   const file = (req.query.file as string) || '';
   const run_id = (req.query.run_id as string) || '';
-  if (!file) return res.status(400).send('File parameter required');
 
+  if (directPath && fs.existsSync(directPath) && fs.statSync(directPath).isFile()) {
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(directPath)}"`);
+    return res.download(directPath, path.basename(directPath));
+  }
+
+  if (!file && !directPath) return res.status(400).send('File parameter required');
+
+  const filename = path.basename(file || directPath);
   const possiblePaths = [
+    directPath,
     file,
-    run_id ? path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', run_id, file) : '',
-    run_id ? path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', run_id, path.basename(file)) : '',
-    path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', file),
-    path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', path.basename(file)),
-    path.join('/cucian', file),
-    path.join('/home/endri-pro/Downloads/CUCIAN', file)
+    run_id ? path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', run_id, filename) : '',
+    path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', filename),
+    path.join('/cucian', filename),
+    path.join('/home/endri-pro/Downloads/CUCIAN', filename)
   ].filter(Boolean);
 
   for (const p of possiblePaths) {
     try {
       if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(p)}"`);
         return res.download(p, path.basename(p));
       }
     } catch (_) {}
   }
+
+  // Recursive search in Results folder if not found directly
+  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  try {
+    if (fs.existsSync(resultsDir)) {
+      const subDirs = fs.readdirSync(resultsDir, { withFileTypes: true });
+      for (const d of subDirs) {
+        if (d.isDirectory()) {
+          const candidate = path.join(resultsDir, d.name, filename);
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            return res.download(candidate, filename);
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
   return res.status(404).send('Result file not found');
 });
 
@@ -397,6 +592,10 @@ wssBridge.on('connection', (ws, req) => {
           const { run_id, suite, status, elapsed_secs, devices: devList, test_type } = msg;
           let job = activeJobs.get(run_id);
           if (!job) {
+            const hist = jobHistory.find(j => j.run_id === run_id);
+            if (hist && (hist.status === 'CANCELLED' || hist.status === 'Finished' || hist.status === 'Failed')) {
+              break;
+            }
             job = {
               run_id,
               pcId: registeredPcId,
@@ -411,6 +610,7 @@ wssBridge.on('connection', (ws, req) => {
             };
             activeJobs.set(run_id, job);
           } else {
+            if (job.status === 'CANCELLED') break;
             job.suite = suite;
             job.status = status;
             job.elapsed_secs = elapsed_secs || job.elapsed_secs;
@@ -423,13 +623,20 @@ wssBridge.on('connection', (ws, req) => {
           const { run_id, summary, zip_file, zip_files, exit_code } = msg;
           const job = activeJobs.get(run_id);
           if (job) {
-            job.status = exit_code === 0 ? 'Finished' : 'Failed';
+            if (job.status !== 'CANCELLED') {
+              job.status = exit_code === 0 ? 'Finished' : 'Failed';
+            }
             job.summary = summary;
             if (zip_files && Array.isArray(zip_files)) {
               job.zip_files = zip_files;
             }
             job.zip_file = zip_file || (job.zip_files && job.zip_files[0]);
-            jobHistory.push({ ...job });
+            const existingIdx = jobHistory.findIndex(j => j.run_id === run_id);
+            if (existingIdx >= 0) {
+              jobHistory[existingIdx] = { ...job, recentLogs: [...job.recentLogs] };
+            } else {
+              jobHistory.unshift({ ...job, recentLogs: [...job.recentLogs] });
+            }
             activeJobs.delete(run_id);
           }
           broadcastFleetState();
@@ -540,7 +747,12 @@ wssUi.on('connection', (ws) => {
               broadcastFleetState();
               setTimeout(() => {
                 activeJobs.delete(run_id);
-                jobHistory.unshift(job);
+                const existingIdx = jobHistory.findIndex(j => j.run_id === run_id);
+                if (existingIdx >= 0) {
+                  jobHistory[existingIdx] = { ...job, recentLogs: [...job.recentLogs] };
+                } else {
+                  jobHistory.unshift({ ...job, recentLogs: [...job.recentLogs] });
+                }
                 broadcastFleetState();
               }, 1200);
             }
@@ -581,6 +793,24 @@ wssUi.on('connection', (ws) => {
               run_id,
               logs: job.recentLogs
             }));
+          }
+          break;
+        }
+
+        case 'EXEC_CLEAR_HISTORY': {
+          jobHistory.length = 0;
+          broadcastFleetState();
+          break;
+        }
+
+        case 'EXEC_DELETE_HISTORY_ITEM': {
+          const { run_id } = msg;
+          if (run_id) {
+            const idx = jobHistory.findIndex(j => j.run_id === run_id);
+            if (idx !== -1) {
+              jobHistory.splice(idx, 1);
+              broadcastFleetState();
+            }
           }
           break;
         }

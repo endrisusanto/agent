@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "gba-agent-bridge",
-  "version": "1.0.0",
-  "identifier": "com.endrisusanto.gba.agentbridge",
+  "version": "1.0.2",
+  "identifier": "com.endrisusanto.gba.fleetbridge",
   "build": {
     "frontendDist": "ui"
   },
@@ -10,7 +10,8 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "GBA Agent Bridge",
+        "title": "GBA Agent Fleet Bridge",
+        "label": "gba_main",
         "width": 540,
         "height": 620,
         "resizable": false,

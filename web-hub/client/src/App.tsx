@@ -26,6 +26,8 @@ export const App: React.FC = () => {
     resetBusy,
     setDeviceLamp,
     analyzeLaundry,
+    deleteHistoryItem,
+    clearHistory,
   } = useFleetWebSocket();
 
   const [selectedStandbySerials, setSelectedStandbySerials] = useState<string[]>([]);
@@ -202,6 +204,7 @@ export const App: React.FC = () => {
         <div ref={runningSectionRef}>
           <RunningWorkflowAccordion
             activeJobs={activeJobs}
+            jobHistory={jobHistory}
             devices={devices}
             onCancelJob={cancelRun}
           />
@@ -212,6 +215,8 @@ export const App: React.FC = () => {
           workflows={workflows}
           devices={devices}
           availableZips={allAvailableZips}
+          activeJobs={activeJobs}
+          jobHistory={jobHistory}
           laundryAnalysis={laundryAnalysis}
           onUpdateWorkflow={handleUpdateWorkflow}
           onRemoveWorkflow={handleRemoveWorkflow}
@@ -236,7 +241,11 @@ export const App: React.FC = () => {
         />
 
         {/* Results History */}
-        <ResultsExplorer history={jobHistory} />
+        <ResultsExplorer
+          history={jobHistory}
+          onDeleteHistoryItem={deleteHistoryItem}
+          onClearAllHistory={clearHistory}
+        />
 
         {/* Laundry Zip Modal Picker */}
         <LaundrySelectModal
@@ -288,9 +297,8 @@ export const App: React.FC = () => {
                   detectedModel ? isModelMatch(d.model, detectedModel) : false
                 );
 
-                const failedModules = rows
-                  .filter((r) => r.failed > 0 || r.status.toUpperCase() === 'FAIL')
-                  .map((r) => r.testcase || r.suite);
+                // Auto select all module rows and all matching devices
+                const allModuleNames = rows.map((r) => r.testcase || r.suite);
 
                 handleUpdateWorkflow({
                   ...wf,
@@ -299,7 +307,8 @@ export const App: React.FC = () => {
                   ap_version: detectedAp || detectedPda || (matchingDevs[0]?.pda ?? ''),
                   plan: detectedPlan,
                   selectedZip: zipPath,
-                  selectedModules: failedModules.length > 0 ? failedModules : rows.map((r) => r.testcase || r.suite),
+                  cachedRows: rows,
+                  selectedModules: allModuleNames,
                   selectedSerials: matchingDevs.map((d) => d.serial),
                 });
               }

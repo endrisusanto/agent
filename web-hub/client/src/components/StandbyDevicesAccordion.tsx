@@ -29,7 +29,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   selectedPcFilter = 'ALL',
   filterType = 'all',
 }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [activeTestPlan, setActiveTestPlan] = useState<TestPlanType>('SMR');
   const [selectedModelFilter, setSelectedModelFilter] = useState<string>('ALL');
 
@@ -162,8 +162,25 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
           </div>
         </div>
 
-        {/* Switch Button Suite Testplan (1 Model, 1 Testplan at once) */}
+        {/* Switch Button Suite Testplan (1 Model, 1 Testplan at once) & Reset Busy */}
         <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-xs"
+            onClick={() => {
+              const pcs = Array.from(new Set(devices.map((d) => d.pcId).filter(Boolean)));
+              if (pcs.length === 0) {
+                onResetBusy('syncmaster');
+              } else {
+                pcs.forEach((pc) => onResetBusy(pc));
+              }
+            }}
+            title="Reset status sibuk (Busy) semua perangkat menjadi Ready"
+          >
+            <RefreshIcon size={12} />
+            <span>Reset Busy State</span>
+          </button>
+
           <div className="segmented-switch-container">
             {(['SMR', 'SKU', 'NORMAL', 'STS'] as const).map((plan) => (
               <button

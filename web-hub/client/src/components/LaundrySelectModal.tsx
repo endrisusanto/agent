@@ -101,7 +101,14 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
-      <div className="modal-dialog" style={{ maxWidth: '840px' }}>
+      <div
+        className="modal-dialog"
+        style={{
+          width: '95vw',
+          maxWidth: '1360px',
+          maxHeight: '92vh',
+        }}
+      >
         <div className="modal-header">
           <div>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Select Laundry Result Zip ({pcId})</h3>
@@ -304,16 +311,16 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                   </div>
 
                   {/* Modules Data Table */}
-                  <div className="table-responsive" style={{ maxHeight: '280px', overflowY: 'auto' }}>
+                  <div className="table-responsive" style={{ maxHeight: '420px', overflowY: 'auto' }}>
                     <table className="data-table">
                       <thead>
                         <tr>
                           <th style={{ width: '56px', textAlign: 'center' }}>SELECT</th>
-                          <th style={{ minWidth: '220px' }}>TESTCASE</th>
-                          <th style={{ minWidth: '260px' }}>SUBTESTCASES</th>
+                          <th style={{ minWidth: '240px' }}>TESTCASE</th>
+                          <th style={{ minWidth: '320px' }}>SUBTESTCASES</th>
                           <th style={{ width: '100px', textAlign: 'center' }}>STATUS</th>
                           <th style={{ width: '90px', textAlign: 'center' }}>TIME</th>
-                          <th style={{ minWidth: '150px' }}>RESULTS</th>
+                          <th style={{ minWidth: '160px' }}>RESULTS</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -352,7 +359,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                                 <div
                                   className="mono text-xs text-secondary"
                                   style={{
-                                    maxWidth: '380px',
+                                    maxWidth: '650px',
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',

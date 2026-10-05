@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -25,6 +25,17 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use crate::types::*;
+
+pub static BROADCAST_WS_TX: LazyLock<Mutex<Option<mpsc::UnboundedSender<Message>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+pub fn send_ws_message(msg: Message) {
+    if let Ok(guard) = BROADCAST_WS_TX.lock() {
+        if let Some(tx) = &*guard {
+            let _ = tx.send(msg);
+        }
+    }
+}
 
 struct AppState {
     config: Arc<Mutex<BridgeConfig>>,
@@ -113,6 +124,9 @@ async fn run_bridge_worker(state: AppState) {
                 {
                     let mut st = state.status.lock().unwrap();
                     st.is_connected = true;
+                    st.pc_id = pc_id.clone();
+                    st.hub_url = hub_url.clone();
+                    st.auto_root = auto_root_str.clone();
                 }
 
                 let (mut write, mut read) = ws_stream.split();
@@ -132,6 +146,7 @@ async fn run_bridge_worker(state: AppState) {
                 let auto_root_scan = auto_root.clone();
                 let pc_id_scan = pc_id.clone();
                 let (scan_tx, mut scan_rx) = mpsc::unbounded_channel::<Message>();
+                *BROADCAST_WS_TX.lock().unwrap() = Some(scan_tx.clone());
                 let scan_tx_loop = scan_tx.clone();
 
                 let scanner_handle = tokio::spawn(async move {
@@ -190,16 +205,13 @@ async fn run_bridge_worker(state: AppState) {
                                                             let (log_tx, mut log_rx) = mpsc::unbounded_channel::<String>();
                                                             let (stat_tx, mut stat_rx) = mpsc::unbounded_channel::<(String, String, u64)>();
 
-                                                            let scan_tx_logs = scan_tx.clone();
-                                                            let scan_tx_stat = scan_tx.clone();
-                                                            let scan_tx_fin = scan_tx.clone();
                                                             let run_id_log = run_id.clone();
                                                             let run_id_stat = run_id.clone();
                                                             let run_id_fin = run_id.clone();
                                                             let test_type_stat = payload.test_type.clone();
 
                                                             // Immediately announce run start
-                                                            let _ = scan_tx.send(Message::Text(json!({
+                                                            send_ws_message(Message::Text(json!({
                                                                 "type": "SUITE_STATUS_UPDATE",
                                                                 "run_id": run_id,
                                                                 "test_type": payload.test_type,
@@ -210,7 +222,7 @@ async fn run_bridge_worker(state: AppState) {
 
                                                             tokio::spawn(async move {
                                                                 while let Some(line) = log_rx.recv().await {
-                                                                    let _ = scan_tx_logs.send(Message::Text(json!({
+                                                                    send_ws_message(Message::Text(json!({
                                                                         "type": "LOG_STREAM",
                                                                         "run_id": run_id_log,
                                                                         "line": line
@@ -220,7 +232,7 @@ async fn run_bridge_worker(state: AppState) {
 
                                                             tokio::spawn(async move {
                                                                 while let Some((suite, status, elapsed)) = stat_rx.recv().await {
-                                                                    let _ = scan_tx_stat.send(Message::Text(json!({
+                                                                    send_ws_message(Message::Text(json!({
                                                                         "type": "SUITE_STATUS_UPDATE",
                                                                         "run_id": run_id_stat,
                                                                         "test_type": test_type_stat,
@@ -239,15 +251,37 @@ async fn run_bridge_worker(state: AppState) {
                                                                     log_tx,
                                                                     stat_tx,
                                                                 );
-                                                                let (exit_code, zip_files, first_zip) = match &outcome {
-                                                                    Ok(o) => (o.exit_code, o.zip_files.clone(), o.zip_files.first().cloned()),
-                                                                    Err(_) => (1, Vec::new(), None),
+                                                                let (exit_code, zip_files, first_zip, summary) = match &outcome {
+                                                                    Ok(o) => (
+                                                                        o.exit_code,
+                                                                        o.zip_files.clone(),
+                                                                        o.zip_files.first().cloned(),
+                                                                        json!({
+                                                                            "passed": o.passed,
+                                                                            "failed": o.failed,
+                                                                            "total": o.total,
+                                                                            "run_time": format!("{}s", o.elapsed_secs),
+                                                                            "test_type": payload.test_type
+                                                                        })
+                                                                    ),
+                                                                    Err(_) => (
+                                                                        1,
+                                                                        Vec::new(),
+                                                                        None,
+                                                                        json!({
+                                                                            "passed": 0,
+                                                                            "failed": 1,
+                                                                            "total": 1,
+                                                                            "run_time": "0s",
+                                                                            "test_type": payload.test_type
+                                                                        })
+                                                                    ),
                                                                 };
-                                                                let _ = scan_tx_fin.send(Message::Text(json!({
+                                                                send_ws_message(Message::Text(json!({
                                                                     "type": "RUN_FINISHED",
                                                                     "run_id": run_id_fin,
                                                                     "exit_code": exit_code,
-                                                                    "summary": null,
+                                                                    "summary": summary,
                                                                     "zip_file": first_zip,
                                                                     "zip_files": zip_files
                                                                 }).to_string()));
@@ -327,6 +361,7 @@ async fn run_bridge_worker(state: AppState) {
                     }
                 }
 
+                *BROADCAST_WS_TX.lock().unwrap() = None;
                 scanner_handle.abort();
                 {
                     let mut st = state.status.lock().unwrap();
@@ -334,11 +369,12 @@ async fn run_bridge_worker(state: AppState) {
                 }
             }
             Err(err) => {
+                *BROADCAST_WS_TX.lock().unwrap() = None;
                 {
                     let mut st = state.status.lock().unwrap();
                     st.is_connected = false;
                 }
-                log_msg(&state, format!("[Bridge] Connection failed: {}. Retrying in 3 seconds...", err));
+                log_msg(&state, format!("[Bridge] Connection failed: {}. Retrying in 1 second...", err));
             }
         }
 
@@ -346,7 +382,7 @@ async fn run_bridge_worker(state: AppState) {
             _ = state.restart_trigger.notified() => {
                 log_msg(&state, "[Bridge] Reconnect triggered by user");
             }
-            _ = sleep(Duration::from_secs(3)) => {}
+            _ = sleep(Duration::from_millis(1000)) => {}
         }
     }
 }
@@ -380,9 +416,9 @@ fn save_bridge_config(
     }
 
     let new_cfg = BridgeConfig {
-        pc_id: clean_pc,
-        hub_url: clean_url,
-        auto_root: clean_root,
+        pc_id: clean_pc.clone(),
+        hub_url: clean_url.clone(),
+        auto_root: clean_root.clone(),
     };
 
     save_config_to_disk(&new_cfg)?;
@@ -390,6 +426,13 @@ fn save_bridge_config(
     {
         let mut cfg = state.config.lock().unwrap();
         *cfg = new_cfg;
+    }
+
+    {
+        let mut st = state.status.lock().unwrap();
+        st.pc_id = clean_pc;
+        st.hub_url = clean_url;
+        st.auto_root = clean_root;
     }
 
     state.restart_trigger.notify_one();
@@ -469,12 +512,13 @@ fn main() {
 
             let tray_menu = Menu::with_items(app, &[&status_item, &show_item, &web_item, &quit_item])?;
 
-            let mut tray_builder = TrayIconBuilder::with_id("main_tray")
+            let mut tray_builder = TrayIconBuilder::with_id("gba_fleet_tray")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
+                        let win = app.get_webview_window("gba_main").or_else(|| app.get_webview_window("main"));
+                        if let Some(window) = win {
                             let _ = window.show();
                             let _ = window.unminimize();
                             let _ = window.set_focus();
@@ -493,7 +537,8 @@ fn main() {
                         ..
                     } = event
                     {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                        let win = tray.app_handle().get_webview_window("gba_main").or_else(|| tray.app_handle().get_webview_window("main"));
+                        if let Some(window) = win {
                             let _ = window.show();
                             let _ = window.unminimize();
                             let _ = window.set_focus();
