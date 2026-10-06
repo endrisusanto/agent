@@ -277,22 +277,10 @@ export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'End
             const innerAndroid = path.join(vDir, s.sub);
             const innerExists = fs.existsSync(innerAndroid) && fs.statSync(innerAndroid).isDirectory();
 
-            items.push({
-              category: s.name,
-              item: `${s.name}/${vName}/${s.sub}`,
-              status: innerExists ? 'OK' : 'WARN',
-              details: innerExists ? 'Package directory ready' : `${s.sub} folder not found inside ${vName}`,
-              path: innerAndroid,
-              can_sync: true,
-              zip_available: false,
-              version: vName,
-              suite: s.name,
-            });
-
             const tool1 = path.join(vDir, s.tool);
             const tool2 = path.join(innerAndroid, s.tool);
             const toolFound = (fs.existsSync(tool1) && fs.statSync(tool1).isFile()) || (fs.existsSync(tool2) && fs.statSync(tool2).isFile());
-            const actualTool = fs.existsSync(tool1) ? tool1 : tool2;
+            const actualPath = innerExists ? innerAndroid : vDir;
 
             const zips = [
               path.join(suiteDir, `${s.sub}-${vName}.zip`),
@@ -301,39 +289,23 @@ export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'End
             ];
             const foundZip = zips.find((z) => fs.existsSync(z) && fs.statSync(z).isFile());
 
+            const isReady = innerExists && toolFound;
+            const detailsMsg = isReady
+              ? (foundZip ? 'Package ready (Zip available & tradefed ready)' : 'Package ready (Extracted suite ready)')
+              : (!innerExists ? `${s.sub} folder not found inside ${vName}` : 'tradefed binary missing or not executable');
+
             items.push({
               category: s.name,
-              item: `${s.name}/${vName}/${s.tool}`,
-              status: toolFound ? 'OK' : 'MISSING',
-              details: toolFound ? (foundZip ? 'Executable ready (Zip package available)' : 'Executable ready (Extracted folder)') : 'tradefed binary missing or not executable',
-              path: actualTool,
+              item: `${s.name}/${vName}/${s.sub}`,
+              status: isReady ? 'OK' : (innerExists ? 'WARN' : 'MISSING'),
+              details: detailsMsg,
+              path: actualPath,
               can_sync: true,
               zip_available: Boolean(foundZip),
               zip_path: foundZip,
               version: vName,
               suite: s.name,
             });
-
-            if (s.name === 'GTS') {
-              const sub1 = path.join(vDir, 'subplans/gtsmr.xml');
-              const sub2 = path.join(innerAndroid, 'subplans/gtsmr.xml');
-              const sub3 = path.join(suiteDir, 'subplans/gtsmr.xml');
-              const subOk = (fs.existsSync(sub1) && fs.statSync(sub1).isFile()) || (fs.existsSync(sub2) && fs.statSync(sub2).isFile()) || (fs.existsSync(sub3) && fs.statSync(sub3).isFile());
-              if (subOk) {
-                const actSub = fs.existsSync(sub1) ? sub1 : (fs.existsSync(sub2) ? sub2 : sub3);
-                items.push({
-                  category: 'GTS',
-                  item: `GTS/${vName}/subplans/gtsmr.xml`,
-                  status: 'OK',
-                  details: 'SMR subplan configuration ready',
-                  path: actSub,
-                  can_sync: false,
-                  zip_available: false,
-                  version: vName,
-                  suite: 'GTS',
-                });
-              }
-            }
           }
         }
       } catch (_) {}

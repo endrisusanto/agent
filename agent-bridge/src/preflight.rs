@@ -58,24 +58,12 @@ pub fn run_preflight_check(auto_root: &Path, pc_id: &str) -> PreflightReport {
                     // Check android-<suite> directory
                     let inner_android = v_dir.join(suite_sub);
                     let inner_exists = inner_android.is_dir();
-                    items.push(PreflightItem {
-                        category: suite_name.to_string(),
-                        item: format!("{}/{}/{}", suite_name, v_name, suite_sub),
-                        status: if inner_exists { "OK".to_string() } else { "WARN".to_string() },
-                        details: if inner_exists { Some("Package directory ready".to_string()) } else { Some(format!("{suite_sub} folder not found inside {v_name}")) },
-                        path: inner_android.to_string_lossy().to_string(),
-                        can_sync: true,
-                        zip_available: false,
-                        zip_path: None,
-                        version: Some(v_name.clone()),
-                        suite: Some(suite_name.to_string()),
-                    });
 
                     // Check tools/*-tradefed
                     let tool_path = v_dir.join(tool_rel);
                     let alt_tool_path = inner_android.join(tool_rel);
                     let tool_found = tool_path.is_file() || alt_tool_path.is_file();
-                    let actual_tool = if tool_path.is_file() { tool_path } else { alt_tool_path };
+                    let actual_path = if inner_exists { inner_android.clone() } else { v_dir.clone() };
 
                     // Check zip availability
                     let zip_name_candidates = [
@@ -97,45 +85,31 @@ pub fn run_preflight_check(auto_root: &Path, pc_id: &str) -> PreflightReport {
                         }
                     }
 
+                    let is_ready = inner_exists && tool_found;
+                    let details_msg = if is_ready {
+                        if found_zip.is_some() {
+                            "Package ready (Zip available & tradefed ready)".to_string()
+                        } else {
+                            "Package ready (Extracted suite ready)".to_string()
+                        }
+                    } else if !inner_exists {
+                        format!("{suite_sub} folder not found inside {v_name}")
+                    } else {
+                        "tradefed binary missing or not executable".to_string()
+                    };
+
                     items.push(PreflightItem {
                         category: suite_name.to_string(),
-                        item: format!("{}/{}/{}", suite_name, v_name, tool_rel),
-                        status: if tool_found { "OK".to_string() } else { "MISSING".to_string() },
-                        details: if tool_found {
-                            Some(if found_zip.is_some() { "Executable ready (Zip package available)" } else { "Executable ready (Extracted folder)" }.to_string())
-                        } else {
-                            Some("tradefed binary missing or not executable".to_string())
-                        },
-                        path: actual_tool.to_string_lossy().to_string(),
+                        item: format!("{}/{}/{}", suite_name, v_name, suite_sub),
+                        status: if is_ready { "OK".to_string() } else if inner_exists { "WARN".to_string() } else { "MISSING".to_string() },
+                        details: Some(details_msg),
+                        path: actual_path.to_string_lossy().to_string(),
                         can_sync: true,
                         zip_available: found_zip.is_some(),
                         zip_path: found_zip.map(|p| p.to_string_lossy().to_string()),
                         version: Some(v_name.clone()),
                         suite: Some(suite_name.to_string()),
                     });
-
-                    // For GTS, also check gtsmr.xml subplan
-                    if *suite_name == "GTS" {
-                        let subplan_file = v_dir.join("subplans/gtsmr.xml");
-                        let alt_subplan = inner_android.join("subplans/gtsmr.xml");
-                        let global_subplan = suite_dir.join("subplans/gtsmr.xml");
-                        let subplan_ok = subplan_file.is_file() || alt_subplan.is_file() || global_subplan.is_file();
-                        if subplan_ok {
-                            let actual_subplan = if subplan_file.is_file() { subplan_file } else if alt_subplan.is_file() { alt_subplan } else { global_subplan };
-                            items.push(PreflightItem {
-                                category: "GTS".to_string(),
-                                item: format!("GTS/{}/subplans/gtsmr.xml", v_name),
-                                status: "OK".to_string(),
-                                details: Some("SMR subplan configuration ready".to_string()),
-                                path: actual_subplan.to_string_lossy().to_string(),
-                                can_sync: false,
-                                zip_available: false,
-                                zip_path: None,
-                                version: Some(v_name.clone()),
-                                suite: Some("GTS".to_string()),
-                            });
-                        }
-                    }
                 }
             }
         }
