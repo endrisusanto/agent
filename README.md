@@ -1,12 +1,12 @@
-# GBA Agentic Auto Fleet Hub & Bridge
+# GBA Agentic Hub & Agent Bridge
 
-Distributed Android Test Suite Automation (CTS, GTS, STS, SKU, MR, SMR, and Cuci SMR) across remote Linux workstation nodes.
+Distributed Android test automation system (CTS, GTS, STS, SKU, MR, SMR, and Laundry SMR) across remote Linux workstation nodes.
 
 ---
 
 ## Overview
 
-GBA Agentic Auto Fleet coordinates large-scale Android compliance and certification test suites across multiple workstation PCs running native agent daemons. Operators manage connected devices, trigger automated test runs, monitor live execution logs, and inspect test results from a central web dashboard.
+GBA Agentic Hub coordinates Android compliance and regression test suites across multiple workstation PCs running native agent daemons (`agent-bridge`). Operators manage connected devices, trigger automated test runs, monitor live execution logs, and inspect test results from a central web dashboard.
 
 ---
 
@@ -14,21 +14,21 @@ GBA Agentic Auto Fleet coordinates large-scale Android compliance and certificat
 
 ```
                                   ┌───────────────────────────────┐
-                                  │      Central Web Hub          │
+                                  │       GBA Agentic Hub         │
                                   │  (agent.endrisusanto.my.id)   │
                                   │  - Node.js + WebSocket Server │
-                                  │  - React + Vite Dashboard     │
+                                  │  - React + Vite Web Client    │
                                   └───────────────▲───────────────┘
                                                   │
-                                WebSocket (/ws/bridge & /ws/ui)
+                                 WebSocket (/ws/bridge & /ws/ui)
                                                   │
                  ┌────────────────────────────────┴────────────────────────────────┐
                  │                                                                 │
   ┌──────────────▼──────────────┐                                   ┌──────────────▼──────────────┐
   │   Node Workstation 01       │                                   │   Node Workstation 02       │
-  │   - gba-agent-bridge (Tray) │                                   │   - gba-agent-bridge (Tray) │
+  │   - agent-bridge (AppTray)  │                                   │   - agent-bridge (AppTray)  │
   │   - Tradefed Runner Engine  │                                   │   - Tradefed Runner Engine  │
-  │   - Local Results/ & ADB    │                                   │   - Local Results/ & ADB    │
+  │   - Local AUTO Root & ADB   │                                   │   - Local AUTO Root & ADB   │
   └──────────────┬──────────────┘                                   └──────────────┬──────────────┘
                  │                                                                 │
         ┌────────┴────────┐                                               ┌────────┴────────┐
@@ -46,32 +46,67 @@ agent/
 │   ├── client/          # React, Vite, and TypeScript frontend dashboard
 │   └── server/          # Node.js backend and WebSocket hub server
 ├── agent-bridge/        # Native Rust/Tauri client daemon with AppTray
-├── build-deb.sh         # Linux .deb native packager script
-├── release.sh           # Automated versioning, tagging, and release script
+├── docker-compose.yml   # Web Hub container deployment
+├── build-deb.sh         # Linux .deb native packager script for agent-bridge
+├── release.sh           # Automated versioning and git tagging script
 └── package.json         # Monorepo workspace configuration
 ```
 
 ---
 
-## Core Capabilities
+## AUTO Suite Root Directory Layout
 
-### Central Web Hub (`agent.endrisusanto.my.id`)
-- **Fleet State Aggregator**: Real-time tracking of connected bridge nodes, active running jobs, and connected Android devices across all benches.
-- **Suite Orchestration**: Triggers `CTS`, `GTS`, `STS`, `SKU`, `MR`, `SMR`, and `Cuci SMR` with custom retry counts, timeouts, and Wi-Fi provisioning.
-- **Cuci SMR (Laundry / Scat Retry)**: Scans result zip archives on target node disks, parses `test_result.xml` subtests, and allows operators to selectively retry failed modules.
-- **Live Log Streaming**: Real-time console log drawer per job and device with auto-scroll and cancel actions.
-- **Design System**: High-contrast dark and light modes with typography powered by `Plus Jakarta Sans` and `JetBrains Mono`.
+On each test workstation node, prepare the `AUTO` root folder (`AUTO_ROOT`, default: `/run/media/endri-pro/BINARY_HDD/AUTO` or configured in `agent-bridge`):
 
-### Native Agent Bridge (`agent-bridge`)
-- **AppTray Background Daemon**: Runs in the system tray with close-to-tray protection to prevent accidental cancellation during long test runs.
-- **Hardware & Build Detection**: Continuously monitors connected ADB devices, extracting Android version, SPL, PDA, CSC, and `USER` vs `USERDEBUG` build types.
-- **Zero Network Waste**: Executes Tradefed suites locally; only metadata and log streams are transmitted to the Hub.
+```
+AUTO/
+├── CUCIAN/                     # Directory for test result ZIP files to be parsed by Laundry Engine
+├── Results/                    # Output directory for test sessions, logs, and generated ZIPs
+├── CTS/                        # Android Compatibility Test Suite packages
+│   └── <Version>/              # Example: 14_r3, 15_r1, 16.1
+│       └── android-cts/
+│           └── tools/cts-tradefed
+├── GTS/                        # Google Mobile Services Test Suite packages
+│   └── <Version>/              # Example: 11_r1, 12_r2
+│       └── android-gts/
+│           └── tools/gts-tradefed
+└── STS/                        # Security Test Suite packages (SPL Month / OS Version)
+    └── <SPL_Month>/            # Example: 2026-08
+        └── <AndroidVersion>/   # Example: 14, 15
+            └── android-sts/
+                └── tools/sts-tradefed
+```
+
+---
+
+## Screenshots
+
+| Desktop View | Mobile View |
+| :---: | :---: |
+| ![Desktop View](docs/screenshots/Desktop.png) | ![Mobile View](docs/screenshots/Mobile.png) |
+
+---
+
+## Core Features
+
+### 1. Central Web Hub
+- **Fleet State Aggregator**: Real-time tracking of connected bridge nodes, active jobs, and connected ADB devices.
+- **Model Laundry Workflow**: Scans result ZIP archives, parses `test_result.xml` subtests, and allows operators to selectively retry failed modules with auto-collapsing form state upon execution.
+- **Standby Devices Accordion**: Quick execution on idle devices with segmented plan switches (`SMR`, `SKU`, `NORMAL`, `STS`) and automatic `USERDEBUG`-only device enforcement for STS mode.
+- **Runs & Logs Accordion**: Active run progress cards with live timers, child log drawers (`SUMMARY`, `STS`, `CTS`, `GTS`), and quick dismissal.
+- **Terminal Logs Modal**: Real-time console log streaming with SVG copy, auto-scroll toggle, test result counters, and run cancellation.
+- **History Results Explorer**: Searchable run history table with test result chips (`Pass`, `Fail`, `Total`) and direct ZIP download actions.
+
+### 2. Native Agent Bridge (`agent-bridge`)
+- **System Tray Daemon**: Runs in the background with close-to-tray protection to keep test sessions alive.
+- **Device & Build Identification**: Reads device model, PDA, CSC, Android release, Security Patch Level, and build type (`USER` vs `USERDEBUG`).
+- **Local Tradefed Execution**: Executes Tradefed suites directly on the workstation using isolated temporary workspaces (`.gba-workspaces/`); only logs and status updates stream to the Hub.
 
 ---
 
 ## Quick Start
 
-### 1. Web Hub Development
+### 1. Web Hub (Local Development)
 ```bash
 # Install workspace dependencies
 npm install
@@ -80,27 +115,37 @@ npm install
 npm run dev
 ```
 
-### 2. Run Agent Bridge Locally
+### 2. Web Hub (Docker Compose Production)
+```bash
+# Build and run Web Hub in detached mode
+docker compose build --no-cache && docker compose up -d
+
+# Check status
+docker compose ps
+```
+The Web Hub will be accessible at `http://localhost:4010` (mapped to container port 4000).
+
+### 3. Agent Bridge (Workstation Client)
 ```bash
 cd agent-bridge
 cargo run
 ```
 
-To connect to a custom hub host or set a specific node identifier:
+To specify custom Hub URL or workstation PC identifier:
 ```bash
-HUB_URL=wss://agent.endrisusanto.my.id/ws/bridge PC_ID=NODE-LAB-01 cargo run
+HUB_URL=wss://agent.endrisusanto.my.id/ws/bridge PC_ID=NODE-01 AUTO_ROOT=/path/to/AUTO cargo run
 ```
 
-### 3. Build & Install Debian Package on Node PCs
+### 4. Build & Install Debian Package on Node PCs
 ```bash
-# Build .deb dan otomatis install langsung ke sistem:
+# Build .deb and install directly on the system:
 npm run build:install
-# atau:
+# or:
 ./build-deb.sh --install
 
-# Hanya build .deb tanpa auto-install:
+# Build .deb without installing:
 npm run build:deb
-# atau:
+# or:
 ./build-deb.sh
 ```
 
@@ -108,12 +153,12 @@ npm run build:deb
 
 ## Automated Releases
 
-To bump version, tag, and trigger GitHub Actions release pipeline:
+To update versions, create git tags, and trigger GitHub Actions build pipelines:
 ```bash
-# Patch release (default: 1.0.0 -> 1.0.1)
+# Patch release (e.g. 1.0.0 -> 1.0.1)
 ./release.sh patch "Description of changes"
 
-# Minor release (1.0.0 -> 1.1.0)
+# Minor release (e.g. 1.0.0 -> 1.1.0)
 ./release.sh minor "Feature update"
 ```
 
