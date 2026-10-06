@@ -82,6 +82,28 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
         {/* Terminal Header */}
         <div className="modal-header terminal-modal-header">
           <div className="terminal-header-left">
+            {allRuns.length > 0 && (
+              <div className="terminal-select-wrap">
+                <select
+                  className="filter-select terminal-run-select"
+                  value={currentRunId}
+                  onChange={(e) => setCurrentRunId(e.target.value)}
+                  aria-label="Pilih Sesi Log Terminal"
+                >
+                  {allRuns.map((run) => {
+                    const isRunActive = activeJobs.some((j) => j.run_id === run.run_id);
+                    const devStr = Array.isArray(run.devices) ? run.devices.join(', ') : (run.devices || '');
+                    const label = `[${isRunActive ? 'RUNNING' : (run.status || 'FINISHED').toUpperCase()}] ${run.test_type || run.suite || 'Workflow'} · ${run.pcId || 'Node'} (${devStr || run.run_id})`;
+                    return (
+                      <option key={run.run_id} value={run.run_id}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+
             {activeJob && (
               <div className="terminal-status-wrap">
                 <span className={`badge ${isRunning ? 'badge-running' : activeJob.status === 'Finished' ? 'badge-pass' : 'badge-fail'} badge-xs`}>

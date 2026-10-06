@@ -217,6 +217,150 @@ const devices = new Map<string, DeviceInfo>();
 const activeJobs = new Map<string, ActiveJob>();
 const jobHistory: ActiveJob[] = [];
 let serverWorkflows: LaundryWorkflowState[] = [];
+const preflightReports = new Map<string, any>();
+
+export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'Endri Ubuntu') {
+  const possibleRoots = [
+    autoRootParam,
+    process.env.AUTO_ROOT,
+    '/run/media/endri-pro/BINARY_HDD/AUTO',
+    '/auto',
+  ].filter((r): r is string => Boolean(r));
+
+  let autoRoot = '/run/media/endri-pro/BINARY_HDD/AUTO';
+  for (const r of possibleRoots) {
+    if (fs.existsSync(r) && (fs.existsSync(path.join(r, 'CTS')) || fs.existsSync(path.join(r, 'GTS')))) {
+      autoRoot = r;
+      break;
+    }
+  }
+
+  const items: any[] = [];
+
+  // 1. Core Dirs
+  const coreDirs = ['CTS', 'GTS', 'STS', 'Results'];
+  for (const d of coreDirs) {
+    const p = path.join(autoRoot, d);
+    const exists = fs.existsSync(p) && fs.statSync(p).isDirectory();
+    items.push({
+      category: 'Core Dir',
+      item: d,
+      status: exists ? 'OK' : 'MISSING',
+      details: exists ? 'Directory exists' : 'Directory not found',
+      path: p,
+      can_sync: false,
+      zip_available: false,
+      suite: d,
+    });
+  }
+
+  // 3. Scan suites CTS, GTS, STS
+  const suites = [
+    { name: 'GTS', sub: 'android-gts', tool: 'tools/gts-tradefed' },
+    { name: 'CTS', sub: 'android-cts', tool: 'tools/cts-tradefed' },
+    { name: 'STS', sub: 'android-sts', tool: 'tools/sts-tradefed' },
+  ];
+
+  for (const s of suites) {
+    const suiteDir = path.join(autoRoot, s.name);
+    let foundAnyVersion = false;
+
+    if (fs.existsSync(suiteDir) && fs.statSync(suiteDir).isDirectory()) {
+      try {
+        const entries = fs.readdirSync(suiteDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.isDirectory()) {
+            const vName = e.name;
+            if (vName.startsWith('.') || vName === 'subplans' || vName === 'Results') continue;
+            foundAnyVersion = true;
+            const vDir = path.join(suiteDir, vName);
+            const innerAndroid = path.join(vDir, s.sub);
+            const innerExists = fs.existsSync(innerAndroid) && fs.statSync(innerAndroid).isDirectory();
+
+            items.push({
+              category: s.name,
+              item: `${s.name}/${vName}/${s.sub}`,
+              status: innerExists ? 'OK' : 'WARN',
+              details: innerExists ? 'Package directory ready' : `${s.sub} folder not found inside ${vName}`,
+              path: innerAndroid,
+              can_sync: true,
+              zip_available: false,
+              version: vName,
+              suite: s.name,
+            });
+
+            const tool1 = path.join(vDir, s.tool);
+            const tool2 = path.join(innerAndroid, s.tool);
+            const toolFound = (fs.existsSync(tool1) && fs.statSync(tool1).isFile()) || (fs.existsSync(tool2) && fs.statSync(tool2).isFile());
+            const actualTool = fs.existsSync(tool1) ? tool1 : tool2;
+
+            const zips = [
+              path.join(suiteDir, `${s.sub}-${vName}.zip`),
+              path.join(suiteDir, `${vName}.zip`),
+              path.join(autoRoot, `${s.name}_${vName}.zip`),
+            ];
+            const foundZip = zips.find((z) => fs.existsSync(z) && fs.statSync(z).isFile());
+
+            items.push({
+              category: s.name,
+              item: `${s.name}/${vName}/${s.tool}`,
+              status: toolFound ? 'OK' : 'MISSING',
+              details: toolFound ? (foundZip ? 'Executable ready (Zip package available)' : 'Executable ready (Extracted folder)') : 'tradefed binary missing or not executable',
+              path: actualTool,
+              can_sync: true,
+              zip_available: Boolean(foundZip),
+              zip_path: foundZip,
+              version: vName,
+              suite: s.name,
+            });
+
+            if (s.name === 'GTS') {
+              const sub1 = path.join(vDir, 'subplans/gtsmr.xml');
+              const sub2 = path.join(innerAndroid, 'subplans/gtsmr.xml');
+              const sub3 = path.join(suiteDir, 'subplans/gtsmr.xml');
+              const subOk = (fs.existsSync(sub1) && fs.statSync(sub1).isFile()) || (fs.existsSync(sub2) && fs.statSync(sub2).isFile()) || (fs.existsSync(sub3) && fs.statSync(sub3).isFile());
+              if (subOk) {
+                const actSub = fs.existsSync(sub1) ? sub1 : (fs.existsSync(sub2) ? sub2 : sub3);
+                items.push({
+                  category: 'GTS',
+                  item: `GTS/${vName}/subplans/gtsmr.xml`,
+                  status: 'OK',
+                  details: 'SMR subplan configuration ready',
+                  path: actSub,
+                  can_sync: false,
+                  zip_available: false,
+                  version: vName,
+                  suite: 'GTS',
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!foundAnyVersion) {
+      items.push({
+        category: s.name,
+        item: `${s.name} (Belum ada versi)`,
+        status: 'MISSING',
+        details: `Folder ${s.name} masih kosong. Belum ada paket test suite terpasang.`,
+        path: suiteDir,
+        can_sync: true,
+        zip_available: false,
+        version: undefined,
+        suite: s.name,
+      });
+    }
+  }
+
+  return {
+    pc_id: pcId,
+    auto_root: autoRoot,
+    items,
+    scanned_at: Math.floor(Date.now() / 1000),
+  };
+}
 
 const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || '/run/media/endri-pro/BINARY_HDD/AUTO/workflows_state.json';
 const FALLBACK_WORKFLOWS_FILE = path.join(__dirname, '../workflows_state.json');
@@ -263,6 +407,15 @@ app.use(express.json());
 // REST: Workflows State API
 app.get('/api/workflows', (_req, res) => {
   res.json({ workflows: serverWorkflows });
+});
+
+app.get('/api/preflight/list', (_req, res) => {
+  if (preflightReports.size === 0) {
+    const autoRoot = process.env.AUTO_ROOT || '/run/media/endri-pro/BINARY_HDD/AUTO';
+    const localRep = generateLocalPreflightReport(autoRoot, 'Endri Ubuntu');
+    preflightReports.set('Endri Ubuntu', localRep);
+  }
+  res.json({ reports: Array.from(preflightReports.values()) });
 });
 
 app.post('/api/workflows', (req, res) => {
@@ -870,7 +1023,8 @@ function broadcastFleetState() {
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50),
-    workflows: serverWorkflows
+    workflows: serverWorkflows,
+    preflightReports: Array.from(preflightReports.values())
   });
 
   for (const client of wssUi.clients) {
@@ -957,6 +1111,15 @@ wssBridge.on('connection', (ws, req) => {
           const bridge = bridges.get(pcId);
           if (bridge) {
             bridge.laundryZips = msg.zips || [];
+            broadcastFleetState();
+          }
+          break;
+        }
+
+        case 'PREFLIGHT_REPORT': {
+          const pcId = msg.pcId || registeredPcId;
+          if (msg.report) {
+            preflightReports.set(pcId, msg.report);
             broadcastFleetState();
           }
           break;
@@ -1092,6 +1255,11 @@ wssUi.on('connection', (ws) => {
   for (const job of jobHistory) {
     enrichJobSummary(job);
   }
+  if (preflightReports.size === 0) {
+    const autoRoot = process.env.AUTO_ROOT || '/run/media/endri-pro/BINARY_HDD/AUTO';
+    const localRep = generateLocalPreflightReport(autoRoot, 'Endri Ubuntu');
+    preflightReports.set('Endri Ubuntu', localRep);
+  }
   // Send immediate fleet snapshot on connect
   ws.send(JSON.stringify({
     type: 'FLEET_STATE',
@@ -1107,7 +1275,8 @@ wssUi.on('connection', (ws) => {
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50),
-    workflows: serverWorkflows
+    workflows: serverWorkflows,
+    preflightReports: Array.from(preflightReports.values())
   }));
 
   ws.on('message', (raw) => {
@@ -1234,6 +1403,18 @@ wssUi.on('connection', (ws) => {
             serverWorkflows = msg.workflows;
             saveWorkflowsToDisk(serverWorkflows);
             broadcastFleetState();
+          }
+          break;
+        }
+
+        case 'CMD_TRIGGER_PREFLIGHT': {
+          const targetPcId = msg.pcId;
+          if (targetPcId) {
+            sendToBridge(targetPcId, { type: 'CMD_TRIGGER_PREFLIGHT' });
+          } else {
+            for (const pcId of bridges.keys()) {
+              sendToBridge(pcId, { type: 'CMD_TRIGGER_PREFLIGHT' });
+            }
           }
           break;
         }

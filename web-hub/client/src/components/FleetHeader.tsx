@@ -1,5 +1,5 @@
 import React from 'react';
-import { ServerIcon, SmartphoneIcon, PlayIcon, SunIcon, MoonIcon } from './Icons';
+import { ServerIcon, SmartphoneIcon, PlayIcon, SunIcon, MoonIcon, PreflightIcon } from './Icons';
 
 interface FleetHeaderProps {
   onlineBridgesCount: number;
@@ -7,6 +7,8 @@ interface FleetHeaderProps {
   activeJobsCount: number;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  onOpenPreflight: () => void;
+  preflightIssueCount?: number;
 }
 
 export const FleetHeader: React.FC<FleetHeaderProps> = ({
@@ -15,6 +17,8 @@ export const FleetHeader: React.FC<FleetHeaderProps> = ({
   activeJobsCount,
   theme,
   onToggleTheme,
+  onOpenPreflight,
+  preflightIssueCount = 0,
 }) => {
   return (
     <header className="header-bar">
@@ -46,6 +50,20 @@ export const FleetHeader: React.FC<FleetHeaderProps> = ({
             <PlayIcon size={14} />
             <span>Jobs: <strong>{activeJobsCount}</strong></span>
           </div>
+
+          <button
+            className="btn btn-secondary btn-preflight-shortcut"
+            onClick={onOpenPreflight}
+            title="Buka Diagnostic & Preflight Check Modal"
+            aria-label="Preflight Check"
+            style={{ position: 'relative' }}
+          >
+            <PreflightIcon size={16} />
+            <span className="btn-text-desktop">Preflight</span>
+            {preflightIssueCount > 0 && (
+              <span className="preflight-badge-dot" title={`${preflightIssueCount} issue(s) detected`} />
+            )}
+          </button>
 
           <button
             className="btn btn-secondary btn-theme-toggle"

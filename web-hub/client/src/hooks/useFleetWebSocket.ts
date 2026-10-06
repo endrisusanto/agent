@@ -96,6 +96,26 @@ export interface LaundryWorkflowState {
   cachedRows?: LaundryRow[];
 }
 
+export interface PreflightItem {
+  category: string;
+  item: string;
+  status: 'OK' | 'MISSING' | 'WARN';
+  details?: string;
+  path: string;
+  can_sync: boolean;
+  zip_available: boolean;
+  zip_path?: string;
+  version?: string;
+  suite?: string;
+}
+
+export interface PreflightReport {
+  pc_id: string;
+  auto_root: string;
+  items: PreflightItem[];
+  scanned_at: number;
+}
+
 export function useFleetWebSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bridges, setBridges] = useState<BridgeInfo[]>([]);
@@ -103,6 +123,7 @@ export function useFleetWebSocket() {
   const [activeJobs, setActiveJobs] = useState<ActiveJobItem[]>([]);
   const [jobHistory, setJobHistory] = useState<ActiveJobItem[]>([]);
   const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>([]);
+  const [preflightReports, setPreflightReports] = useState<PreflightReport[]>([]);
   const [laundryAnalysis, setLaundryAnalysis] = useState<{
     pcId: string;
     zip_path: string;
@@ -137,6 +158,9 @@ export function useFleetWebSocket() {
             if (Array.isArray(msg.workflows) && msg.workflows.length > 0) {
               setWorkflows(msg.workflows);
             }
+            if (Array.isArray(msg.preflightReports)) {
+              setPreflightReports(msg.preflightReports);
+            }
 
             const enrichedActive: ActiveJobItem[] = (msg.activeJobs || []).map((j: ActiveJobItem) => {
               const cached = logsByRunIdRef.current.get(j.run_id) || [];
@@ -158,6 +182,15 @@ export function useFleetWebSocket() {
             setJobHistory(enrichedHistory);
             break;
           }
+
+          case 'PREFLIGHT_UPDATE':
+            if (msg.report) {
+              setPreflightReports((prev) => {
+                const filtered = prev.filter((r) => r.pc_id !== msg.pcId);
+                return [...filtered, msg.report];
+              });
+            }
+            break;
 
           case 'LOG_LINE': {
             const { run_id, line } = msg;
@@ -219,11 +252,27 @@ export function useFleetWebSocket() {
 
   useEffect(() => {
     connect();
+    // Also fetch initial preflight list via HTTP
+    fetch('/api/preflight/list')
+      .then((r) => r.ok ? r.json() : { reports: [] })
+      .then((data) => {
+        if (Array.isArray(data.reports) && data.reports.length > 0) {
+          setPreflightReports(data.reports);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) wsRef.current.close();
     };
   }, [connect]);
+
+  const triggerPreflightCheck = useCallback((pcId?: string) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'CMD_TRIGGER_PREFLIGHT', pcId }));
+    }
+  }, []);
 
   const runSuite = useCallback((pcId: string, payload: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -292,6 +341,8 @@ export function useFleetWebSocket() {
     workflows,
     setWorkflows,
     syncWorkflows,
+    preflightReports,
+    triggerPreflightCheck,
     laundryAnalysis,
     setLaundryAnalysis,
     runSuite,

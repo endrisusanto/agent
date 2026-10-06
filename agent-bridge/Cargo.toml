@@ -1,6 +1,6 @@
 [package]
 name = "gba-agent-bridge"
-version = "1.0.8"
+version = "1.0.9"
 edition = "2021"
 description = "GBA Agentic Lightweight System Tray Bridge for Distributed Automation"
 
@@ -17,6 +17,8 @@ walkdir = "2.5"
 zip = "0.6"
 tempfile = "3.10"
 hostname = "0.4"
+flate2 = "1.0"
+tar = "0.4"
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }

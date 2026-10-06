@@ -119,3 +119,25 @@ pub struct BridgeLiveStatus {
     pub zip_count: usize,
     pub recent_logs: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreflightItem {
+    pub category: String,
+    pub item: String,
+    pub status: String, // "OK", "MISSING", "WARN"
+    pub details: Option<String>,
+    pub path: String,
+    pub can_sync: bool,
+    pub zip_available: bool,
+    pub zip_path: Option<String>,
+    pub version: Option<String>,
+    pub suite: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreflightReport {
+    pub pc_id: String,
+    pub auto_root: String,
+    pub items: Vec<PreflightItem>,
+    pub scanned_at: u64,
+}

@@ -4,6 +4,7 @@ mod types;
 mod scanner;
 mod laundry;
 mod runner;
+mod preflight;
 
 use std::collections::VecDeque;
 use std::env;
@@ -131,7 +132,7 @@ async fn run_bridge_worker(state: AppState) {
 
                 let (mut write, mut read) = ws_stream.split();
 
-                // 1. Send Node Registration
+                // 1. Send Node Registration & Initial Preflight Report
                 let zips = scanner::scan_laundry_zips(&auto_root);
                 let reg_msg = json!({
                     "type": "REGISTER_NODE",
@@ -142,6 +143,14 @@ async fn run_bridge_worker(state: AppState) {
                 });
                 let _ = write.send(Message::Text(reg_msg.to_string())).await;
 
+                let initial_preflight = preflight::run_preflight_check(&auto_root, &pc_id);
+                let preflight_msg = json!({
+                    "type": "PREFLIGHT_REPORT",
+                    "pcId": pc_id,
+                    "report": initial_preflight,
+                });
+                let _ = write.send(Message::Text(preflight_msg.to_string())).await;
+
                 // 2. Spawn periodic scanner loop
                 let auto_root_scan = auto_root.clone();
                 let pc_id_scan = pc_id.clone();
@@ -150,6 +159,7 @@ async fn run_bridge_worker(state: AppState) {
                 let scan_tx_loop = scan_tx.clone();
 
                 let scanner_handle = tokio::spawn(async move {
+                    let mut tick_counter: u32 = 0;
                     loop {
                         let devs = scanner::scan_all_devices(&auto_root_scan);
                         let zips = scanner::scan_laundry_zips(&auto_root_scan);
@@ -167,6 +177,19 @@ async fn run_bridge_worker(state: AppState) {
                             "zips": zips,
                         });
                         let _ = scan_tx_loop.send(Message::Text(zip_msg.to_string()));
+
+                        // Preflight scan every 10 seconds (every 4 ticks)
+                        tick_counter += 1;
+                        if tick_counter >= 4 {
+                            tick_counter = 0;
+                            let report = preflight::run_preflight_check(&auto_root_scan, &pc_id_scan);
+                            let p_msg = json!({
+                                "type": "PREFLIGHT_REPORT",
+                                "pcId": pc_id_scan,
+                                "report": report,
+                            });
+                            let _ = scan_tx_loop.send(Message::Text(p_msg.to_string()));
+                        }
 
                         sleep(Duration::from_millis(2500)).await;
                     }
@@ -345,6 +368,17 @@ async fn run_bridge_worker(state: AppState) {
                                                         }
                                                     }
                                                 }
+                                            }
+
+                                            "CMD_TRIGGER_PREFLIGHT" => {
+                                                let report = preflight::run_preflight_check(&auto_root, &pc_id);
+                                                let p_msg = json!({
+                                                    "type": "PREFLIGHT_REPORT",
+                                                    "pcId": pc_id,
+                                                    "report": report,
+                                                });
+                                                let _ = write.send(Message::Text(p_msg.to_string())).await;
+                                                log_msg(&state, format!("[Bridge] Sent on-demand Preflight Report ({} items)", report.items.len()));
                                             }
 
                                             _ => {}

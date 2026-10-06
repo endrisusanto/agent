@@ -8,6 +8,7 @@ import { RunningWorkflowAccordion } from './components/RunningWorkflowAccordion'
 import { ResultsExplorer } from './components/ResultsExplorer';
 import { LaundrySelectModal } from './components/LaundrySelectModal';
 import { TerminalLogsModal } from './components/TerminalLogsModal';
+import { PreflightModal } from './components/PreflightModal';
 import { LaundryWorkflowState, isModelMatch, detectZipPlanKind } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
@@ -22,6 +23,8 @@ export const App: React.FC = () => {
     jobHistory,
     workflows: serverWorkflows,
     syncWorkflows,
+    preflightReports,
+    triggerPreflightCheck,
     laundryAnalysis,
     runSuite,
     cancelRun,
@@ -35,6 +38,7 @@ export const App: React.FC = () => {
   const [selectedStandbySerials, setSelectedStandbySerials] = useState<string[]>([]);
   const [isLaundryModalOpen, setIsLaundryModalOpen] = useState(false);
   const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
+  const [isPreflightModalOpen, setIsPreflightModalOpen] = useState(false);
   const [activeWorkflowIdForPicker, setActiveWorkflowIdForPicker] = useState<string>('');
   const [pickerPcId, setPickerPcId] = useState<string>('');
 
@@ -192,6 +196,12 @@ export const App: React.FC = () => {
   const activePickerBridge = bridges.find((b) => b.pcId === pickerPcId) || bridges[0];
   const zipsForPicker = activePickerBridge?.laundryZips || allAvailableZips;
 
+  const preflightIssueCount = useMemo(() => {
+    return preflightReports.reduce((acc, rep) => {
+      return acc + rep.items.filter((i) => i.status === 'MISSING' || i.status === 'WARN').length;
+    }, 0);
+  }, [preflightReports]);
+
   return (
     <div className="app-container">
       <FleetHeader
@@ -200,6 +210,8 @@ export const App: React.FC = () => {
         activeJobsCount={activeJobs.length}
         theme={theme}
         onToggleTheme={toggleTheme}
+        onOpenPreflight={() => setIsPreflightModalOpen(true)}
+        preflightIssueCount={preflightIssueCount}
       />
       <main className="main-content">
         {/* Standalone Filter Toolbar Card at Top */}
@@ -339,6 +351,15 @@ export const App: React.FC = () => {
           jobHistory={jobHistory}
           selectedRunId={terminalSelectedRunId}
           onCancelJob={cancelRun}
+        />
+
+        {/* Preflight Check Modal */}
+        <PreflightModal
+          isOpen={isPreflightModalOpen}
+          onClose={() => setIsPreflightModalOpen(false)}
+          preflightReports={preflightReports}
+          bridges={bridges}
+          onTriggerScan={triggerPreflightCheck}
         />
       </main>
     </div>
