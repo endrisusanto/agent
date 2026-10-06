@@ -300,38 +300,42 @@ pub fn execute_suite_run(
 
     let collected_zips = Arc::new(Mutex::new(Vec::<String>::new()));
 
-    let exit_code = match payload.test_type.as_str() {
-        "Laundry" | "Laundry Normal" | "Laundry SKU" | "Laundry SMR" => {
-            let has_sts = payload.test_type == "Laundry SMR" || payload.selected_laundry_rows.iter().any(|r| {
-                let suite = r.get("suite").and_then(|v| v.as_str()).unwrap_or("");
-                let testcase = r.get("testcase").and_then(|v| v.as_str()).unwrap_or("");
-                suite.eq_ignore_ascii_case("sts") || testcase.to_uppercase().contains("STS")
-            });
+    let is_laundry = payload.laundry_zip_path.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+        || payload.test_type.starts_with("Laundry")
+        || payload.test_type.starts_with("Cuci");
 
-            if has_sts {
-                run_laundry_smr_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
-            } else {
-                run_laundry_normal_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
+    let exit_code = if is_laundry {
+        let has_sts = payload.test_type.contains("SMR") || payload.selected_laundry_rows.iter().any(|r| {
+            let suite = r.get("suite").and_then(|v| v.as_str()).unwrap_or("");
+            let testcase = r.get("testcase").and_then(|v| v.as_str()).unwrap_or("");
+            suite.eq_ignore_ascii_case("sts") || testcase.to_uppercase().contains("STS")
+        });
+
+        if has_sts {
+            run_laundry_smr_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
+        } else {
+            run_laundry_normal_flow(auto_root, &session_dir, &log_dir, payload, &model, &pda, &run_id, &log_tx, &status_tx, &collected_zips)?
+        }
+    } else {
+        match payload.test_type.as_str() {
+            "Cuci SMR" => {
+                run_cts_then_gts_flow(
+                    auto_root,
+                    &session_dir,
+                    &log_dir,
+                    &payload.user_devices,
+                    "ctssmr",
+                    "run gts --subplan gtssmr",
+                    payload.timeout_secs,
+                    &model,
+                    &pda,
+                    &run_id,
+                    &payload.test_type,
+                    &log_tx,
+                    &status_tx,
+                    &collected_zips,
+                )?
             }
-        }
-        "Cuci SMR" => {
-            run_cts_then_gts_flow(
-                auto_root,
-                &session_dir,
-                &log_dir,
-                &payload.user_devices,
-                "ctssmr",
-                "run gts --subplan gtssmr",
-                payload.timeout_secs,
-                &model,
-                &pda,
-                &run_id,
-                &payload.test_type,
-                &log_tx,
-                &status_tx,
-                &collected_zips,
-            )?
-        }
         "SKU" => {
             run_cts_then_gts_flow(
                 auto_root,
@@ -455,6 +459,7 @@ pub fn execute_suite_run(
         }
         _ => {
             return Err(format!("Unsupported test type: {}", payload.test_type));
+        }
         }
     };
 

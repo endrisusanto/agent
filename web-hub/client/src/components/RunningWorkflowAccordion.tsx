@@ -255,7 +255,7 @@ const SingleWorkflowRunner: React.FC<{
                 {isParentOpen ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
               </span>
               <strong className="workflow-run-title">
-                WORKFLOW: {(job.test_type || job.suite || '').replace(/^Laundry\s+/i, '')}
+                WORKFLOW: {job.test_type || job.suite || ''}
               </strong>
             </div>
 

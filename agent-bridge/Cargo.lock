@@ -1252,7 +1252,7 @@ dependencies = [
 
 [[package]]
 name = "gba-agent-bridge"
-version = "1.0.3"
+version = "1.0.8"
 dependencies = [
  "futures-util",
  "hostname",

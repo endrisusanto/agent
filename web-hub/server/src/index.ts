@@ -1129,9 +1129,9 @@ wssUi.on('connection', (ws) => {
               job = {
                 run_id,
                 pcId: targetPcId,
-                test_type: payload.test_type ? payload.test_type.replace(/^Laundry\s+/i, '') : 'SMR',
+                test_type: payload.test_type || 'SMR',
                 status: 'Starting',
-                suite: payload.test_type ? payload.test_type.replace(/^Laundry\s+/i, '') : 'SMR',
+                suite: payload.test_type || 'SMR',
                 startedAt: Date.now(),
                 devices: targetDevs,
                 elapsed_secs: 0,

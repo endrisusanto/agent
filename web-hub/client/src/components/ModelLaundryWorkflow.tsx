@@ -229,8 +229,10 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
 
     const detectedPlanName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
+    const laundryTestType = `Laundry ${detectedPlanName}`;
     onRunSuite(targetPcId, {
-      test_type: detectedPlanName,
+      test_type: laundryTestType,
+      target_model: workflow.model,
       laundry_zip_path: workflow.selectedZip,
       selected_laundry_results: workflow.selectedModules,
       selected_laundry_rows: selectedRowsData,
