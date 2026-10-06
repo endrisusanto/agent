@@ -80,11 +80,10 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
     : (activeJob?.devices || '');
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="modal-overlay" role="dialog" aria-modal="true">
       <div
         className="modal-dialog"
         style={{ maxWidth: '980px', height: '85vh', display: 'flex', flexDirection: 'column' }}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Terminal Header */}
         <div className="modal-header terminal-modal-header">

@@ -109,37 +109,16 @@ export interface ActiveTransferItem {
   totalBytes: number;
   transferredBytes: number;
   speedMBps: number;
-  status: 'running' | 'paused' | 'completed' | 'cancelled';
+  status: 'running' | 'paused' | 'extracting' | 'completed' | 'cancelled' | 'failed';
   progress: number;
 }
 
+// ponytail: Unified server-side state simplified to accordions and transfer modal only
 export interface UnifiedUiState {
-  theme: 'dark' | 'light';
-  // Filters & Top Bar
-  searchQuery: string;
-  selectedPcFilter: string;
-  selectedModeFilter: 'all' | 'user' | 'userdebug' | 'busy';
-  // Accordions
   standbyExpanded: boolean;
   resultsExpanded: boolean;
-  // Standby selections
-  selectedStandbySerials: string[];
-  standbyTestPlan: 'SMR' | 'SKU' | 'NORMAL' | 'STS';
-  standbyModelFilter: string;
-  // Modals Visibility
-  isPreflightModalOpen: boolean;
-  isTerminalModalOpen: boolean;
-  isLaundryModalOpen: boolean;
-  activeWorkflowIdForPicker: string;
-  pickerPcId: string;
-  terminalSelectedRunId: string;
-  // Floating Transfer Modal
   transferModalOpen: boolean;
   transferModalExpanded: boolean;
-  // Preflight filters
-  preflightSelectedNode: string;
-  preflightSearch: string;
-  preflightStatusFilter: 'ALL' | 'ISSUES' | 'OK';
 }
 
 export interface PreflightItem {
@@ -171,26 +150,10 @@ export function useFleetWebSocket() {
   const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>([]);
   const [preflightReports, setPreflightReports] = useState<PreflightReport[]>([]);
   const [uiState, setUiState] = useState<UnifiedUiState>({
-    theme: (localStorage.getItem('gba_theme') as 'dark' | 'light') || 'dark',
-    searchQuery: '',
-    selectedPcFilter: 'ALL',
-    selectedModeFilter: 'all',
     standbyExpanded: false,
     resultsExpanded: true,
-    selectedStandbySerials: [],
-    standbyTestPlan: 'SMR',
-    standbyModelFilter: 'ALL',
-    isPreflightModalOpen: false,
-    isTerminalModalOpen: false,
-    isLaundryModalOpen: false,
-    activeWorkflowIdForPicker: '',
-    pickerPcId: '',
-    terminalSelectedRunId: '',
     transferModalOpen: false,
     transferModalExpanded: true,
-    preflightSelectedNode: 'ALL',
-    preflightSearch: '',
-    preflightStatusFilter: 'ALL',
   });
   const [transfers, setTransfers] = useState<ActiveTransferItem[]>([]);
   const [laundryAnalysis, setLaundryAnalysis] = useState<{
@@ -203,6 +166,8 @@ export function useFleetWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const logsByRunIdRef = useRef<Map<string, string[]>>(new Map());
+  const lastLocalUiUpdateRef = useRef<number>(0);
+  const lastLocalWorkflowsUpdateRef = useRef<number>(0);
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -224,15 +189,25 @@ export function useFleetWebSocket() {
           case 'FLEET_STATE': {
             setBridges(msg.bridges || []);
             setDevices(msg.devices || []);
-            if (Array.isArray(msg.workflows) && msg.workflows.length > 0) {
-              setWorkflows(msg.workflows);
+            
+            // Guard against stale broadcast overwriting recent local workflow updates
+            if (Date.now() - lastLocalWorkflowsUpdateRef.current > 800) {
+              if (Array.isArray(msg.workflows) && msg.workflows.length > 0) {
+                setWorkflows(msg.workflows);
+              }
             }
+
             if (Array.isArray(msg.preflightReports)) {
               setPreflightReports(msg.preflightReports);
             }
-            if (msg.uiState && typeof msg.uiState === 'object') {
-              setUiState((prev) => ({ ...prev, ...msg.uiState }));
+
+            // Guard against stale broadcast overwriting recent local UI state interactions
+            if (Date.now() - lastLocalUiUpdateRef.current > 600) {
+              if (msg.uiState && typeof msg.uiState === 'object') {
+                setUiState((prev) => ({ ...prev, ...msg.uiState }));
+              }
             }
+
             if (Array.isArray(msg.transfers)) {
               setTransfers(msg.transfers);
             }
@@ -396,30 +371,19 @@ export function useFleetWebSocket() {
   }, []);
 
   const syncWorkflows = useCallback((newWorkflows: LaundryWorkflowState[]) => {
+    lastLocalWorkflowsUpdateRef.current = Date.now();
     setWorkflows(newWorkflows);
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'SYNC_WORKFLOWS', workflows: newWorkflows }));
     }
-    fetch('/api/workflows', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workflows: newWorkflows }),
-    }).catch(() => {});
   }, []);
 
   const updateUiState = useCallback((partial: Partial<UnifiedUiState>) => {
-    setUiState((prev) => {
-      const next = { ...prev, ...partial };
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'SYNC_UI_STATE', uiState: next }));
-      }
-      fetch('/api/ui-state', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uiState: next }),
-      }).catch(() => {});
-      return next;
-    });
+    lastLocalUiUpdateRef.current = Date.now();
+    setUiState((prev) => ({ ...prev, ...partial }));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'SYNC_UI_STATE', uiState: partial }));
+    }
   }, []);
 
   const startTransfer = useCallback(

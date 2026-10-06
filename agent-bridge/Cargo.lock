@@ -1282,7 +1282,7 @@ dependencies = [
 
 [[package]]
 name = "gba-agent-bridge"
-version = "1.0.11"
+version = "1.0.12"
 dependencies = [
  "flate2",
  "futures-util",

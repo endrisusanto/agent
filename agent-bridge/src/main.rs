@@ -194,6 +194,8 @@ async fn perform_sync_tool(
         ),
     );
 
+    send_sync_progress(&transfer_id, transferred, total_bytes, 0.0, "extracting", 99.0);
+
     // Extract archive while preserving raw zip file
     let is_sts = clean_res.to_uppercase().contains("STS") || raw_filename.to_uppercase().contains("STS");
     let mut extract_success = false;
@@ -339,7 +341,20 @@ fn load_initial_config() -> BridgeConfig {
 
     let default_pc_id = env::var("PC_ID").unwrap_or(host);
     let default_hub_url = env::var("HUB_URL").unwrap_or_else(|_| "wss://agent.endrisusanto.my.id/ws/bridge".to_string());
-    let default_auto_root = env::var("AUTO_ROOT").unwrap_or_else(|_| "/run/media/endri-pro/BINARY_HDD/AUTO".to_string());
+    let default_auto_root = env::var("AUTO_ROOT").unwrap_or_else(|_| {
+        let candidates = [
+            "/run/media/endri-pro/BINARY_HDD1/AUTO",
+            "/run/media/endri-pro/BINARY_HDD/AUTO",
+            "/home/endri-pro/Desktop/GBA/AUTO",
+        ];
+        for c in candidates {
+            let p = std::path::Path::new(c);
+            if p.exists() && p.is_dir() {
+                return c.to_string();
+            }
+        }
+        "/run/media/endri-pro/BINARY_HDD/AUTO".to_string()
+    });
 
     let path = config_path();
     if path.is_file() {
@@ -657,10 +672,17 @@ async fn run_bridge_worker(state: AppState) {
                                                     .replace("wss://", "https://")
                                                     .replace("/ws/bridge", "");
 
-                                                let download_url = val.get("download_url")
+                                                let raw_download_url = val.get("download_url")
                                                     .and_then(|v| v.as_str())
-                                                    .map(|s| s.to_string())
-                                                    .unwrap_or_else(|| format!("{}/api/sync/file?path={}", hub_http_base, resource));
+                                                    .unwrap_or("");
+
+                                                let download_url = if raw_download_url.starts_with("http://") || raw_download_url.starts_with("https://") {
+                                                    raw_download_url.to_string()
+                                                } else if raw_download_url.starts_with('/') {
+                                                    format!("{}{}", hub_http_base.trim_end_matches('/'), raw_download_url)
+                                                } else {
+                                                    format!("{}/api/sync/file?path={}", hub_http_base.trim_end_matches('/'), resource)
+                                                };
 
                                                 let auto_root_cloned = auto_root.clone();
                                                 let state_cloned = state.clone();

@@ -41,37 +41,97 @@ pub fn run_preflight_check(auto_root: &Path, pc_id: &str) -> PreflightReport {
         let mut found_any_version = false;
 
         if suite_dir.is_dir() {
+            let mut candidate_v_dirs: Vec<(String, PathBuf)> = Vec::new();
             if let Ok(entries) = fs::read_dir(&suite_dir) {
-                let mut version_dirs: Vec<PathBuf> = entries
-                    .filter_map(|e| e.ok().map(|x| x.path()))
-                    .filter(|p| p.is_dir())
-                    .collect();
-                version_dirs.sort();
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if !p.is_dir() { continue; }
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if name.starts_with('.') || name == "subplans" || name == "Results" { continue; }
 
-                for v_dir in version_dirs {
-                    let v_name = v_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    if v_name.starts_with('.') || v_name == "subplans" || v_name == "Results" {
-                        continue;
+                    let direct_android = p.join(suite_sub);
+                    if direct_android.is_dir() || p.join(tool_rel).is_file() {
+                        candidate_v_dirs.push((name, p));
+                    } else if let Ok(sub_entries) = fs::read_dir(&p) {
+                        let sub_dirs: Vec<PathBuf> = sub_entries
+                            .flatten()
+                            .map(|x| x.path())
+                            .filter(|x| x.is_dir())
+                            .collect();
+                        if !sub_dirs.is_empty() {
+                            for sub_p in sub_dirs {
+                                let sub_name = sub_p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                if sub_name.starts_with('.') || sub_name == "subplans" || sub_name == "Results" { continue; }
+                                candidate_v_dirs.push((format!("{}/{}", name, sub_name), sub_p));
+                            }
+                        } else {
+                            candidate_v_dirs.push((name, p));
+                        }
+                    } else {
+                        candidate_v_dirs.push((name, p));
                     }
-                    found_any_version = true;
+                }
+            }
 
-                    // Check android-<suite> directory
-                    let inner_android = v_dir.join(suite_sub);
-                    let inner_exists = inner_android.is_dir();
+            candidate_v_dirs.sort_by(|a, b| a.0.cmp(&b.0));
 
-                    // Check tools/*-tradefed
-                    let tool_path = v_dir.join(tool_rel);
-                    let alt_tool_path = inner_android.join(tool_rel);
-                    let tool_found = tool_path.is_file() || alt_tool_path.is_file();
-                    let actual_path = if inner_exists { inner_android.clone() } else { v_dir.clone() };
+            for (v_name, v_dir) in candidate_v_dirs {
+                found_any_version = true;
 
-                    // Check zip availability
+                // Check android-<suite> directory
+                let inner_android = v_dir.join(suite_sub);
+                let inner_exists = inner_android.is_dir();
+
+                // Check tools/*-tradefed
+                let tool_path = v_dir.join(tool_rel);
+                let alt_tool_path = inner_android.join(tool_rel);
+                let tool_found = tool_path.is_file() || alt_tool_path.is_file();
+                let actual_path = if inner_exists { inner_android.clone() } else { v_dir.clone() };
+
+                // Robust Zip Detection:
+                // 1) Scan inside v_dir for any .zip or .zip.001
+                let mut found_zip: Option<PathBuf> = None;
+                if let Ok(entries) = fs::read_dir(&v_dir) {
+                    for entry in entries.flatten() {
+                        let ep = entry.path();
+                        if ep.is_file() {
+                            let fname = ep.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            if fname.to_lowercase().ends_with(".zip") || fname.to_lowercase().contains(".zip.") {
+                                found_zip = Some(ep);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 2) If not in v_dir, check parent of v_dir
+                if found_zip.is_none() {
+                    if let Some(parent_dir) = v_dir.parent() {
+                        if let Ok(entries) = fs::read_dir(parent_dir) {
+                            for entry in entries.flatten() {
+                                let ep = entry.path();
+                                if ep.is_file() {
+                                    let fname = ep.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                    if fname.to_lowercase().ends_with(".zip") || fname.to_lowercase().contains(".zip.") {
+                                        let base_v = v_name.split('/').next_back().unwrap_or(&v_name);
+                                        if fname.to_lowercase().contains(&base_v.to_lowercase()) || fname.to_lowercase().contains(suite_sub) {
+                                            found_zip = Some(ep);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3) Candidate names
+                if found_zip.is_none() {
                     let zip_name_candidates = [
                         format!("{suite_sub}-{v_name}.zip"),
                         format!("{v_name}.zip"),
                         format!("{suite_name}_{v_name}.zip"),
                     ];
-                    let mut found_zip: Option<PathBuf> = None;
                     for zname in &zip_name_candidates {
                         let direct_zip = suite_dir.join(zname);
                         if direct_zip.is_file() {
@@ -84,33 +144,33 @@ pub fn run_preflight_check(auto_root: &Path, pc_id: &str) -> PreflightReport {
                             break;
                         }
                     }
-
-                    let is_ready = inner_exists && tool_found;
-                    let details_msg = if is_ready {
-                        if found_zip.is_some() {
-                            "Package ready (Zip available & tradefed ready)".to_string()
-                        } else {
-                            "Package ready (Extracted suite ready)".to_string()
-                        }
-                    } else if !inner_exists {
-                        format!("{suite_sub} folder not found inside {v_name}")
-                    } else {
-                        "tradefed binary missing or not executable".to_string()
-                    };
-
-                    items.push(PreflightItem {
-                        category: suite_name.to_string(),
-                        item: format!("{}/{}/{}", suite_name, v_name, suite_sub),
-                        status: if is_ready { "OK".to_string() } else if inner_exists { "WARN".to_string() } else { "MISSING".to_string() },
-                        details: Some(details_msg),
-                        path: actual_path.to_string_lossy().to_string(),
-                        can_sync: true,
-                        zip_available: found_zip.is_some(),
-                        zip_path: found_zip.map(|p| p.to_string_lossy().to_string()),
-                        version: Some(v_name.clone()),
-                        suite: Some(suite_name.to_string()),
-                    });
                 }
+
+                let is_ready = inner_exists && tool_found;
+                let details_msg = if is_ready {
+                    if found_zip.is_some() {
+                        "Package ready (Zip available & tradefed ready)".to_string()
+                    } else {
+                        "Package ready (Extracted suite ready)".to_string()
+                    }
+                } else if !inner_exists {
+                    format!("{suite_sub} folder not found inside {v_name}")
+                } else {
+                    "tradefed binary missing or not executable".to_string()
+                };
+
+                items.push(PreflightItem {
+                    category: suite_name.to_string(),
+                    item: format!("{}/{}/{}", suite_name, v_name, suite_sub),
+                    status: if is_ready { "OK".to_string() } else if inner_exists { "WARN".to_string() } else { "MISSING".to_string() },
+                    details: Some(details_msg),
+                    path: actual_path.to_string_lossy().to_string(),
+                    can_sync: true,
+                    zip_available: found_zip.is_some(),
+                    zip_path: found_zip.map(|p| p.to_string_lossy().to_string()),
+                    version: Some(v_name.clone()),
+                    suite: Some(suite_name.to_string()),
+                });
             }
         }
 

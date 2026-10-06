@@ -114,37 +114,16 @@ export interface ActiveTransferItem {
   totalBytes: number;
   transferredBytes: number;
   speedMBps: number;
-  status: 'running' | 'paused' | 'completed' | 'cancelled';
+  status: 'running' | 'paused' | 'extracting' | 'completed' | 'cancelled' | 'failed';
   progress: number;
 }
 
+// ponytail: Unified server-side state simplified to accordions and transfer modal only
 export interface UnifiedUiState {
-  theme: 'dark' | 'light';
-  // Filters & Top Bar
-  searchQuery: string;
-  selectedPcFilter: string;
-  selectedModeFilter: 'all' | 'user' | 'userdebug' | 'busy';
-  // Accordions
   standbyExpanded: boolean;
   resultsExpanded: boolean;
-  // Standby selections
-  selectedStandbySerials: string[];
-  standbyTestPlan: 'SMR' | 'SKU' | 'NORMAL' | 'STS';
-  standbyModelFilter: string;
-  // Modals Visibility
-  isPreflightModalOpen: boolean;
-  isTerminalModalOpen: boolean;
-  isLaundryModalOpen: boolean;
-  activeWorkflowIdForPicker: string;
-  pickerPcId: string;
-  terminalSelectedRunId: string;
-  // Floating Transfer Modal
   transferModalOpen: boolean;
   transferModalExpanded: boolean;
-  // Preflight filters
-  preflightSelectedNode: string;
-  preflightSearch: string;
-  preflightStatusFilter: 'ALL' | 'ISSUES' | 'OK';
 }
 
 export function formatDurationHms(val: number | string | undefined | null): string {
@@ -264,21 +243,36 @@ const jobHistory: ActiveJob[] = [];
 let serverWorkflows: LaundryWorkflowState[] = [];
 const preflightReports = new Map<string, any>();
 
-export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'Endri Ubuntu') {
-  const possibleRoots = [
-    autoRootParam,
+export function getAutoRoot(): string {
+  const candidates = [
     process.env.AUTO_ROOT,
-    '/run/media/endri-pro/BINARY_HDD/AUTO',
     '/auto',
+    '/run/media/endri-pro/BINARY_HDD1/AUTO',
+    '/run/media/endri-pro/BINARY_HDD/AUTO',
+    '/home/gba/Desktop/GBA/AUTO',
   ].filter((r): r is string => Boolean(r));
 
-  let autoRoot = '/run/media/endri-pro/BINARY_HDD/AUTO';
-  for (const r of possibleRoots) {
-    if (fs.existsSync(r) && (fs.existsSync(path.join(r, 'CTS')) || fs.existsSync(path.join(r, 'GTS')))) {
-      autoRoot = r;
-      break;
+  for (const r of candidates) {
+    if (fs.existsSync(r) && (fs.existsSync(path.join(r, 'CTS')) || fs.existsSync(path.join(r, 'GTS')) || fs.existsSync(path.join(r, 'STS')))) {
+      return r;
     }
   }
+  for (const r of candidates) {
+    if (fs.existsSync(r)) return r;
+  }
+  return '/auto';
+}
+
+export function getResultsDir(): string {
+  const auto = getAutoRoot();
+  const res = path.join(auto, 'Results');
+  if (fs.existsSync(res)) return res;
+  if (process.env.RESULTS_DIR && fs.existsSync(process.env.RESULTS_DIR)) return process.env.RESULTS_DIR;
+  return res;
+}
+
+export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'Endri Ubuntu') {
+  const autoRoot = autoRootParam && fs.existsSync(autoRootParam) ? autoRootParam : getAutoRoot();
 
   const items: any[] = [];
 
@@ -312,46 +306,112 @@ export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'End
 
     if (fs.existsSync(suiteDir) && fs.statSync(suiteDir).isDirectory()) {
       try {
+        const candidateVDirs: { vName: string; vDir: string }[] = [];
         const entries = fs.readdirSync(suiteDir, { withFileTypes: true });
         for (const e of entries) {
-          if (e.isDirectory()) {
-            const vName = e.name;
-            if (vName.startsWith('.') || vName === 'subplans' || vName === 'Results') continue;
-            foundAnyVersion = true;
-            const vDir = path.join(suiteDir, vName);
-            const innerAndroid = path.join(vDir, s.sub);
-            const innerExists = fs.existsSync(innerAndroid) && fs.statSync(innerAndroid).isDirectory();
+          if (!e.isDirectory()) continue;
+          const name = e.name;
+          if (name.startsWith('.') || name === 'subplans' || name === 'Results') continue;
 
-            const tool1 = path.join(vDir, s.tool);
-            const tool2 = path.join(innerAndroid, s.tool);
-            const toolFound = (fs.existsSync(tool1) && fs.statSync(tool1).isFile()) || (fs.existsSync(tool2) && fs.statSync(tool2).isFile());
-            const actualPath = innerExists ? innerAndroid : vDir;
+          const p = path.join(suiteDir, name);
+          const directAndroid = path.join(p, s.sub);
+          const directTool = path.join(p, s.tool);
+          if (fs.existsSync(directAndroid) || fs.existsSync(directTool)) {
+            candidateVDirs.push({ vName: name, vDir: p });
+          } else {
+            // Check subdirectories (e.g. STS/08/15)
+            try {
+              const subEntries = fs.readdirSync(p, { withFileTypes: true });
+              let hasSubs = false;
+              for (const subE of subEntries) {
+                if (subE.isDirectory() && !subE.name.startsWith('.') && subE.name !== 'subplans' && subE.name !== 'Results') {
+                  candidateVDirs.push({ vName: `${name}/${subE.name}`, vDir: path.join(p, subE.name) });
+                  hasSubs = true;
+                }
+              }
+              if (!hasSubs) {
+                candidateVDirs.push({ vName: name, vDir: p });
+              }
+            } catch (_) {
+              candidateVDirs.push({ vName: name, vDir: p });
+            }
+          }
+        }
 
+        candidateVDirs.sort((a, b) => a.vName.localeCompare(b.vName));
+
+        for (const { vName, vDir } of candidateVDirs) {
+          foundAnyVersion = true;
+          const innerAndroid = path.join(vDir, s.sub);
+          const innerExists = fs.existsSync(innerAndroid) && fs.statSync(innerAndroid).isDirectory();
+
+          const tool1 = path.join(vDir, s.tool);
+          const tool2 = path.join(innerAndroid, s.tool);
+          const toolFound =
+            (fs.existsSync(tool1) && fs.statSync(tool1).isFile()) ||
+            (fs.existsSync(tool2) && fs.statSync(tool2).isFile());
+          const actualPath = innerExists ? innerAndroid : vDir;
+
+          // Robust Zip Detection:
+          let foundZip: string | undefined = undefined;
+
+          // 1) Inside vDir
+          try {
+            const vFiles = fs.readdirSync(vDir);
+            for (const f of vFiles) {
+              const fullF = path.join(vDir, f);
+              if (fs.statSync(fullF).isFile() && (f.toLowerCase().endsWith('.zip') || f.toLowerCase().includes('.zip.'))) {
+                foundZip = fullF;
+                break;
+              }
+            }
+          } catch (_) {}
+
+          // 2) In parent folder of vDir
+          if (!foundZip) {
+            try {
+              const parentP = path.dirname(vDir);
+              const pFiles = fs.readdirSync(parentP);
+              for (const f of pFiles) {
+                const fullF = path.join(parentP, f);
+                if (fs.statSync(fullF).isFile() && (f.toLowerCase().endsWith('.zip') || f.toLowerCase().includes('.zip.'))) {
+                  const baseV = vName.split('/').pop() || vName;
+                  if (f.toLowerCase().includes(baseV.toLowerCase()) || f.toLowerCase().includes(s.sub)) {
+                    foundZip = fullF;
+                    break;
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+
+          // 3) Fallback candidate names
+          if (!foundZip) {
             const zips = [
               path.join(suiteDir, `${s.sub}-${vName}.zip`),
               path.join(suiteDir, `${vName}.zip`),
               path.join(autoRoot, `${s.name}_${vName}.zip`),
             ];
-            const foundZip = zips.find((z) => fs.existsSync(z) && fs.statSync(z).isFile());
-
-            const isReady = innerExists && toolFound;
-            const detailsMsg = isReady
-              ? (foundZip ? 'Package ready (Zip available & tradefed ready)' : 'Package ready (Extracted suite ready)')
-              : (!innerExists ? `${s.sub} folder not found inside ${vName}` : 'tradefed binary missing or not executable');
-
-            items.push({
-              category: s.name,
-              item: `${s.name}/${vName}/${s.sub}`,
-              status: isReady ? 'OK' : (innerExists ? 'WARN' : 'MISSING'),
-              details: detailsMsg,
-              path: actualPath,
-              can_sync: true,
-              zip_available: Boolean(foundZip),
-              zip_path: foundZip,
-              version: vName,
-              suite: s.name,
-            });
+            foundZip = zips.find((z) => fs.existsSync(z) && fs.statSync(z).isFile());
           }
+
+          const isReady = innerExists && toolFound;
+          const detailsMsg = isReady
+            ? (foundZip ? 'Package ready (Zip available & tradefed ready)' : 'Package ready (Extracted suite ready)')
+            : (!innerExists ? `${s.sub} folder not found inside ${vName}` : 'tradefed binary missing or not executable');
+
+          items.push({
+            category: s.name,
+            item: `${s.name}/${vName}/${s.sub}`,
+            status: isReady ? 'OK' : (innerExists ? 'WARN' : 'MISSING'),
+            details: detailsMsg,
+            path: actualPath,
+            can_sync: true,
+            zip_available: Boolean(foundZip),
+            zip_path: foundZip,
+            version: vName,
+            suite: s.name,
+          });
         }
       } catch (_) {}
     }
@@ -379,32 +439,16 @@ export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'End
   };
 }
 
-const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || '/run/media/endri-pro/BINARY_HDD/AUTO/workflows_state.json';
+const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || path.join(getAutoRoot(), 'workflows_state.json');
 const FALLBACK_WORKFLOWS_FILE = path.join(__dirname, '../workflows_state.json');
 const UI_STATE_FILE = process.env.UI_STATE_FILE || '/tmp/gba_ui_state.json';
 const TRANSFERS_FILE = process.env.TRANSFERS_FILE || '/tmp/gba_transfers.json';
 
 let serverUiState: UnifiedUiState = {
-  theme: 'dark',
-  searchQuery: '',
-  selectedPcFilter: 'ALL',
-  selectedModeFilter: 'all',
   standbyExpanded: false,
   resultsExpanded: true,
-  selectedStandbySerials: [],
-  standbyTestPlan: 'SMR',
-  standbyModelFilter: 'ALL',
-  isPreflightModalOpen: false,
-  isTerminalModalOpen: false,
-  isLaundryModalOpen: false,
-  activeWorkflowIdForPicker: '',
-  pickerPcId: '',
-  terminalSelectedRunId: '',
   transferModalOpen: false,
   transferModalExpanded: true,
-  preflightSelectedNode: 'ALL',
-  preflightSearch: '',
-  preflightStatusFilter: 'ALL',
 };
 
 let serverActiveTransfers: ActiveTransferItem[] = [];
@@ -499,7 +543,7 @@ app.post('/api/ui-state', (req, res) => {
 
 app.get('/api/preflight/list', (_req, res) => {
   if (preflightReports.size === 0) {
-    const autoRoot = process.env.AUTO_ROOT || '/run/media/endri-pro/BINARY_HDD/AUTO';
+    const autoRoot = getAutoRoot();
     const localRep = generateLocalPreflightReport(autoRoot, 'Endri Ubuntu');
     preflightReports.set('Endri Ubuntu', localRep);
   }
@@ -512,19 +556,7 @@ app.get('/api/sync/file', (req, res) => {
     return res.status(400).send('Missing path parameter');
   }
 
-  const possibleRoots = [
-    process.env.AUTO_ROOT,
-    '/run/media/endri-pro/BINARY_HDD/AUTO',
-    '/auto',
-  ].filter((r): r is string => Boolean(r));
-
-  let autoRoot = '/run/media/endri-pro/BINARY_HDD/AUTO';
-  for (const r of possibleRoots) {
-    if (fs.existsSync(r)) {
-      autoRoot = r;
-      break;
-    }
-  }
+  const autoRoot = getAutoRoot();
 
   // 1. Direct file match
   const fullTarget = path.join(autoRoot, reqPath);
@@ -790,7 +822,7 @@ function scanBatchSummary(targetPath: string): { total: number; passed: number; 
 }
 
 function enrichJobSummary(job: ActiveJob): void {
-  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  const resultsDir = getResultsDir();
   try {
     if (!fs.existsSync(resultsDir)) return;
 
@@ -845,7 +877,7 @@ function enrichJobSummary(job: ActiveJob): void {
 }
 
 function initJobHistoryFromDisk(): void {
-  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  const resultsDir = getResultsDir();
   try {
     if (!fs.existsSync(resultsDir)) return;
     const entries = fs.readdirSync(resultsDir, { withFileTypes: true });
@@ -910,7 +942,7 @@ function initJobHistoryFromDisk(): void {
 
 // REST: Result ZIP List Endpoint (Individual Suite ZIPs & Grouped Master Batches)
 app.get('/api/results/list', (_req, res) => {
-  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  const resultsDir = getResultsDir();
   const zips: Array<{
     filename: string;
     path: string;
@@ -1078,11 +1110,12 @@ app.get('/api/results/download', (req, res) => {
   if (!file && !directPath) return res.status(400).send('File parameter required');
 
   const filename = path.basename(file || directPath);
+  const resultsDir = getResultsDir();
   const possiblePaths = [
     directPath,
     file,
-    run_id ? path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', run_id, filename) : '',
-    path.join('/run/media/endri-pro/BINARY_HDD/AUTO/Results', filename),
+    run_id ? path.join(resultsDir, run_id, filename) : '',
+    path.join(resultsDir, filename),
     path.join('/cucian', filename),
     path.join('/home/endri-pro/Downloads/CUCIAN', filename)
   ].filter(Boolean);
@@ -1097,7 +1130,6 @@ app.get('/api/results/download', (req, res) => {
   }
 
   // Recursive search in Results folder if not found directly
-  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
   try {
     if (fs.existsSync(resultsDir)) {
       const subDirs = fs.readdirSync(resultsDir, { withFileTypes: true });
@@ -1435,7 +1467,7 @@ wssUi.on('connection', (ws) => {
     enrichJobSummary(job);
   }
   if (preflightReports.size === 0) {
-    const autoRoot = process.env.AUTO_ROOT || '/run/media/endri-pro/BINARY_HDD/AUTO';
+    const autoRoot = getAutoRoot();
     const localRep = generateLocalPreflightReport(autoRoot, 'Endri Ubuntu');
     preflightReports.set('Endri Ubuntu', localRep);
   }

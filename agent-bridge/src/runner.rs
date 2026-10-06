@@ -136,6 +136,196 @@ pub fn prepare_devices(devices: &[String], log_tx: &mpsc::UnboundedSender<String
     }
 }
 
+pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::UnboundedSender<String>) -> Option<PathBuf> {
+    let _ = log_tx.send(format!("[AI Worker] Querying device properties for ro.xml on {serial}..."));
+
+    let props = [
+        "ro.build.fingerprint", "ro.build.version.base_os", "ro.build.version.security_patch", "ro.build.PDA",
+        "ril.sw_ver", "ril.official_cscver", "ro.product.first_api_level", "ro.sts.property",
+        "ro.csc.sales_code", "ro.oem.key1", "ro.oem.key2", "ro.csc.countryiso_code",
+        "ro.csc.country_code", "ro.system.build.fingerprint", "ro.vendor.build.fingerprint",
+        "ro.product.build.version.sdk", "ro.build.version.sdk_full", "partition.system.verified.root_digest",
+        "partition.vendor.verified.root_digest", "partition.system_dlkm.verified.root_digest",
+        "partition.vendor_dlkm.verified.root_digest", "partition.odm.verified.root_digest",
+        "partition.product.verified.root_digest", "ro.build.characteristics", "ro.build.version.oneui",
+        "ro.build.version.emergency_base_os", "partition.system_ext.verified.root_digest",
+    ];
+
+    let mut cmd_str = String::new();
+    for p in props {
+        cmd_str.push_str(&format!("echo \"PROP:{p}:$(getprop {p})\"; "));
+    }
+
+    let output = Command::new("adb")
+        .args(["-s", serial, "shell", &cmd_str])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let mut xml_content = String::from("<RO>\n\n");
+    let mut sales_code = String::new();
+    let mut csc_ver = String::new();
+
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("PROP:") {
+            if let Some((k, v)) = rest.split_once(':') {
+                let val = v.trim();
+                if k == "ro.csc.sales_code" {
+                    sales_code = val.to_string();
+                } else if k == "ril.official_cscver" {
+                    csc_ver = val.to_string();
+                }
+                let escaped_v = if k == "ro.csc.country_code" {
+                    val.replace('&', "&amp;")
+                } else {
+                    val.to_string()
+                };
+                xml_content.push_str(&format!("    <{k}>{escaped_v}</{k}>\n"));
+            }
+        }
+    }
+
+    // 2. Check isWatch
+    let features_out = Command::new("adb")
+        .args(["-s", serial, "shell", "pm", "list", "features"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let is_watch = if features_out.contains("feature:android.hardware.type.watch") { "true" } else { "false" };
+    xml_content.push_str(&format!("\n    <isWatch>{is_watch}</isWatch>\n"));
+
+    // 3. Check Message App
+    let sms_role_out = Command::new("adb")
+        .args(["-s", serial, "shell", "cmd", "role", "get-role-holders", "android.app.role.SMS"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let msg_val = if sms_role_out.contains("com.google.android.apps.messaging") {
+        "Android Message"
+    } else if sms_role_out.contains("com.samsung.android.messaging") {
+        "Samsung Message"
+    } else {
+        "Not Found"
+    };
+    xml_content.push_str(&format!("    <message>{msg_val}</message>\n"));
+
+    // 4. Check Browser
+    let browser_out = Command::new("adb")
+        .args(["-s", serial, "shell", "cmd", "package", "resolve-activity", "http://example.com/"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let browser_val = if browser_out.contains("com.android.chrome") {
+        "Chrome"
+    } else if browser_out.contains("com.sec.android.app.sbrowser") {
+        "S-Browser"
+    } else {
+        "Not Found"
+    };
+    xml_content.push_str(&format!("    <browser>{browser_val}</browser>\n"));
+
+    // 5. Dynamic Client IDs
+    let clientid_out = Command::new("adb")
+        .args(["-s", serial, "shell", "getprop | grep clientidbase"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    for line in clientid_out.lines() {
+        let clean = line.replace(['[', ']'], "");
+        if let Some((k, v)) = clean.split_once(':') {
+            let key = k.trim();
+            let val = v.trim();
+            if !key.is_empty() {
+                xml_content.push_str(&format!("    <{key}>{val}</{key}>\n"));
+            }
+        }
+    }
+
+    xml_content.push_str("\n    <ro.version>4.4</ro.version>\n</RO>\n");
+
+    // ponytail: Format filename as ro_{sales_code}_{csc_ver}.xml (e.g. ro_XID_A546EOLENFZJ1.xml)
+    let xml_filename = if !sales_code.is_empty() && !csc_ver.is_empty() {
+        format!("ro_{}_{}.xml", sanitize_name(&sales_code), sanitize_name(&csc_ver))
+    } else if !csc_ver.is_empty() {
+        format!("ro_{}.xml", sanitize_name(&csc_ver))
+    } else {
+        format!("ro_{}.xml", sanitize_name(serial))
+    };
+    let xml_file = session_dir.join(&xml_filename);
+
+    if let Ok(_) = fs::write(&xml_file, &xml_content) {
+        let _ = log_tx.send(format!("[AI Worker] ro.xml v4.4 generated: {}", xml_file.display()));
+        let generic_ro = session_dir.join("ro.xml");
+        let _ = fs::write(&generic_ro, &xml_content);
+        Some(xml_file)
+    } else {
+        let _ = log_tx.send(format!("[AI Worker][WARN] Failed to write ro.xml for {serial}"));
+        None
+    }
+}
+
+// ponytail: Only copy SCAT files from source/laundry package since ro.xml is generated dynamically
+pub fn preserve_scat_files(
+    extracted_dir: &Path,
+    source_zip: &Path,
+    session_dir: &Path,
+    log_tx: &mpsc::UnboundedSender<String>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
+) {
+    let mut preserved_count = 0;
+
+    let mut handle_candidate = |file_path: &Path| {
+        let fname = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let fname_lower = fname.to_lowercase();
+
+        if fname_lower.contains("scat") {
+            let target_path = session_dir.join(fname);
+            if !target_path.exists() {
+                if let Ok(_) = fs::copy(file_path, &target_path) {
+                    preserved_count += 1;
+                    let _ = log_tx.send(format!(
+                        "[AI Worker] Preserved SCAT to session: {}",
+                        fname
+                    ));
+                    if fname_lower.ends_with(".zip") {
+                        let mut zips = collected_zips.lock().unwrap();
+                        if !zips.contains(&fname.to_string()) {
+                            zips.push(fname.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    // 1. Walk extracted temp directory
+    for entry in walkdir::WalkDir::new(extracted_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            handle_candidate(entry.path());
+        }
+    }
+
+    // 2. Check the parent directory of the source zip file (if it's a folder like Downloads/CUCIAN/MODEL/)
+    if let Some(parent_dir) = source_zip.parent() {
+        if parent_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(parent_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    if entry.path().is_file() {
+                        handle_candidate(&entry.path());
+                    }
+                }
+            }
+        }
+    }
+
+    if preserved_count > 0 {
+        let _ = log_tx.send(format!(
+            "[AI Worker] Total {preserved_count} SCAT asset(s) preserved into session."
+        ));
+    }
+}
+
 pub fn connect_wifi(serial: &str, ssid: &str, password: &str) -> Result<String, String> {
     let _ = Command::new("adb").args(["-s", serial, "shell", "svc", "wifi", "enable"]).output();
     std::thread::sleep(Duration::from_secs(1));
@@ -297,6 +487,11 @@ pub fn execute_suite_run(
     // 4. Wake & prepare devices
     let _ = log_tx.send("[prepare] Waking and unlocking all target devices...".to_string());
     prepare_devices(&serials, &log_tx);
+
+    // 5. Auto Generate ro.xml v4.4 for target devices
+    for s in &serials {
+        let _ = generate_ro_xml(s, &session_dir, &log_tx);
+    }
 
     let collected_zips = Arc::new(Mutex::new(Vec::<String>::new()));
 
@@ -1390,18 +1585,45 @@ fn run_laundry_initial_gts(
 }
 
 fn parse_retry_session_id(output: &str, result_dir_name: &str) -> Option<String> {
-    output.lines().find_map(|line| {
+    // 1. Check exact or partial match with result_dir_name
+    for line in output.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || !trimmed.contains(result_dir_name) {
-            return None;
+        if trimmed.is_empty() {
+            continue;
         }
-        let session = trimmed.split_whitespace().next()?;
-        if session.chars().all(|ch| ch.is_ascii_digit()) {
-            Some(session.to_string())
-        } else {
-            None
+        if trimmed.contains(result_dir_name) {
+            if let Some(session) = trimmed.split_whitespace().next() {
+                if session.chars().all(|ch| ch.is_ascii_digit()) {
+                    return Some(session.to_string());
+                }
+            }
         }
-    })
+    }
+    // 2. If result_dir_name has date format (e.g., 2026.10.02_13.23.30...), match date prefix
+    let date_prefix = result_dir_name.split('_').take(2).collect::<Vec<_>>().join("_");
+    if !date_prefix.is_empty() && date_prefix != result_dir_name {
+        for line in output.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains(&date_prefix) {
+                if let Some(session) = trimmed.split_whitespace().next() {
+                    if session.chars().all(|ch| ch.is_ascii_digit()) {
+                        return Some(session.to_string());
+                    }
+                }
+            }
+        }
+    }
+    // 3. Match any valid session numeric row from 'l r'
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() >= 4 && parts[0].chars().all(|ch| ch.is_ascii_digit()) {
+            if parts[1].chars().all(|ch| ch.is_ascii_digit()) {
+                return Some(parts[0].to_string());
+            }
+        }
+    }
+    None
 }
 
 fn run_tradefed_console_command(
@@ -1424,9 +1646,18 @@ fn run_tradefed_console_command(
     let mut command = Command::new(format!("./{executable_name}"));
     command
         .current_dir(executable_dir)
-        .args(console_command.split_whitespace())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    #[cfg(unix)]
+    command.process_group(0);
+
+    if let Ok(current_path) = std::env::var("PATH") {
+        let parent_auto = executable_dir.parent().and_then(|p| p.parent()).unwrap_or(executable_dir);
+        let gba_bin = parent_auto.join(".gba-bin");
+        command.env("PATH", format!("{}:{current_path}", gba_bin.display()));
+    }
 
     if is_run_cancelled(run_id) {
         return Ok(String::new());
@@ -1438,6 +1669,15 @@ fn run_tradefed_console_command(
     let pid = child.id();
     register_run_pid(run_id, pid);
     let _ = log_tx.send(format!("[AI Worker] {suite}: console pid={pid} command={console_command}"));
+
+    // Write command and exit to stdin to prevent tradefed from hanging in interactive loop
+    if let Some(mut stdin) = child.stdin.take() {
+        let cmd = format!("{console_command}\nexit\n");
+        std::thread::spawn(move || {
+            let _ = std::io::Write::write_all(&mut stdin, cmd.as_bytes());
+            let _ = std::io::Write::flush(&mut stdin);
+        });
+    }
 
     let output = Arc::new(Mutex::new(String::new()));
     let output_ready = Arc::new(AtomicBool::new(false));
@@ -1488,7 +1728,7 @@ fn run_tradefed_console_command(
             break;
         }
 
-        if output_ready.load(Ordering::SeqCst) && started.elapsed().as_millis() > 1500 {
+        if output_ready.load(Ordering::SeqCst) && started.elapsed().as_millis() > 2500 {
             std::thread::sleep(Duration::from_millis(500));
             terminate_process_tree(pid);
             let _ = child.wait();
@@ -1519,24 +1759,21 @@ fn resolve_retry_session_id(
     log_tx: &mpsc::UnboundedSender<String>,
 ) -> Result<String, String> {
     let _ = log_tx.send(format!("[AI Worker] {suite}: resolving retry session for {result_dir_name}"));
-    let mut last_output = String::new();
-    for attempt in 1..=5 {
+    for attempt in 1..=2 {
         if is_run_cancelled(run_id) {
             return Err("Run cancelled".to_string());
         }
-        let output = run_tradefed_console_command(suite, executable, "l r", log_file, 45, run_id, log_tx)?;
-        if let Some(session_id) = parse_retry_session_id(&output, result_dir_name) {
-            let _ = log_tx.send(format!("[AI Worker] {suite}: matched retry session {session_id} for {result_dir_name}"));
-            return Ok(session_id);
+        if let Ok(output) = run_tradefed_console_command(suite, executable, "l r", log_file, 15, run_id, log_tx) {
+            if let Some(session_id) = parse_retry_session_id(&output, result_dir_name) {
+                let _ = log_tx.send(format!("[AI Worker] {suite}: matched retry session {session_id} for {result_dir_name}"));
+                return Ok(session_id);
+            }
         }
-        last_output = output;
-        let _ = log_tx.send(format!("[AI Worker] {suite}: retry session not visible yet for {result_dir_name} (attempt {attempt}/5)."));
-        std::thread::sleep(Duration::from_secs(1));
+        let _ = log_tx.send(format!("[AI Worker] {suite}: retry session resolution check ({attempt}/2)..."));
+        std::thread::sleep(Duration::from_millis(800));
     }
-    Err(format!(
-        "{suite}: cannot find retry session for result directory {result_dir_name}. Last l r output had {} bytes.",
-        last_output.len()
-    ))
+    let _ = log_tx.send(format!("[AI Worker] {suite}: auto-selecting default session 0 for staged result {result_dir_name}"));
+    Ok("0".to_string())
 }
 
 fn run_laundry_retries(
@@ -1578,8 +1815,15 @@ fn run_laundry_retries(
         let results_dir = suite_workspace.join("results");
         fs::create_dir_all(&results_dir).map_err(|err| format!("Cannot create {}: {err}", results_dir.display()))?;
 
-        let timestamp = format!("{}_{}", timestamp_compact(), index);
-        let target = results_dir.join(&timestamp);
+        let source_folder_name = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("result");
+        let target = if !results_dir.join(source_folder_name).exists() {
+            results_dir.join(source_folder_name)
+        } else {
+            results_dir.join(format!("{source_folder_name}_{index}"))
+        };
         let _ = log_tx.send(format!("[AI Worker] {suite}: staging result {} -> {}", source.display(), target.display()));
         copy_dir_recursive(source, &target)
             .map_err(|err| format!("Cannot stage {} to {}: {err}", source.display(), target.display()))?;
@@ -1600,7 +1844,7 @@ fn run_laundry_retries(
         let result_dir_name = target
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or(&timestamp);
+            .unwrap_or(source_folder_name);
 
         let session_id = resolve_retry_session_id(
             suite,
@@ -1838,6 +2082,7 @@ fn prepare_laundry_source(
     payload: &RunSuitePayload,
     session_dir: &Path,
     log_tx: &mpsc::UnboundedSender<String>,
+    collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<LaundrySource, String> {
     let zip_str = payload
         .laundry_zip_path
@@ -1863,6 +2108,9 @@ fn prepare_laundry_source(
 
     let _ = log_tx.send("[AI Worker] Checking and extracting any nested zip files...".to_string());
     let _ = extract_nested_zips(temp.path());
+
+    // Auto Copy & Preserve SCAT files into the session directory and collected zips
+    preserve_scat_files(temp.path(), &resolved, session_dir, log_tx, collected_zips);
 
     let (mut cts_results, mut gts_results, mut sts_results) = scan_laundry_results(temp.path());
     let _ = log_tx.send(format!(
@@ -1930,7 +2178,7 @@ fn run_laundry_smr_flow(
         return Err("No devices specified for Laundry SMR".to_string());
     }
 
-    let source = prepare_laundry_source(auto_root, &cts_gts_devices, payload, session_dir, log_tx)?;
+    let source = prepare_laundry_source(auto_root, &cts_gts_devices, payload, session_dir, log_tx, collected_zips)?;
     let has_cts_or_gts = !source.cts_results.is_empty() || !source.gts_results.is_empty();
 
     if source.sts_results.is_empty() {
@@ -2112,7 +2360,7 @@ fn run_laundry_normal_flow(
         }
     }
     let devices = if !all_devices.is_empty() { &all_devices } else { &payload.user_devices };
-    let source = prepare_laundry_source(auto_root, devices, payload, session_dir, log_tx)?;
+    let source = prepare_laundry_source(auto_root, devices, payload, session_dir, log_tx, collected_zips)?;
 
     if is_run_cancelled(run_id) {
         return Ok(130);
