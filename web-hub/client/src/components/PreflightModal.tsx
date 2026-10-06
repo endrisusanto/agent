@@ -12,15 +12,6 @@ import {
   ServerIcon,
 } from './Icons';
 
-interface PreflightModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  preflightReports: PreflightReport[];
-  bridges: BridgeInfo[];
-  onTriggerScan: (pcId?: string) => void;
-  onStartSync?: (sourceNode: string, targetNode: string, resourceName: string) => void;
-}
-
 interface MatrixPreflightRow {
   key: string;
   category: string;
@@ -37,6 +28,21 @@ interface MatrixPreflightRow {
   }>;
 }
 
+interface PreflightModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  preflightReports: PreflightReport[];
+  bridges: BridgeInfo[];
+  onTriggerScan: (pcId?: string) => void;
+  onStartSync: (sourceNode: string, targetNode: string, resourceName: string) => void;
+  selectedNodeFilter?: string;
+  onNodeFilterChange?: (node: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (q: string) => void;
+  statusFilter?: 'ALL' | 'ISSUES' | 'OK';
+  onStatusFilterChange?: (s: 'ALL' | 'ISSUES' | 'OK') => void;
+}
+
 export const PreflightModal: React.FC<PreflightModalProps> = ({
   isOpen,
   onClose,
@@ -44,10 +50,25 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
   bridges,
   onTriggerScan,
   onStartSync,
+  selectedNodeFilter: controlledNodeFilter,
+  onNodeFilterChange,
+  searchQuery: controlledSearch,
+  onSearchChange,
+  statusFilter: controlledStatusFilter,
+  onStatusFilterChange,
 }) => {
-  const [selectedNodeFilter, setSelectedNodeFilter] = useState<string>('ALL');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ISSUES' | 'OK'>('ALL');
+  const [internalNodeFilter, setInternalNodeFilter] = useState<string>('ALL');
+  const selectedNodeFilter = controlledNodeFilter !== undefined ? controlledNodeFilter : internalNodeFilter;
+  const setSelectedNodeFilter = onNodeFilterChange || setInternalNodeFilter;
+
+  const [internalSearch, setInternalSearch] = useState<string>('');
+  const searchQuery = controlledSearch !== undefined ? controlledSearch : internalSearch;
+  const setSearchQuery = onSearchChange || setInternalSearch;
+
+  const [internalStatusFilter, setInternalStatusFilter] = useState<'ALL' | 'ISSUES' | 'OK'>('ALL');
+  const statusFilter = controlledStatusFilter !== undefined ? controlledStatusFilter : internalStatusFilter;
+  const setStatusFilter = onStatusFilterChange || setInternalStatusFilter;
+
   const [isScanning, setIsScanning] = useState<boolean>(false);
 
   // Trigger diagnostic scan immediately when modal opens
@@ -408,8 +429,14 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
 
                         {/* Resource & Path */}
                         <td style={{ verticalAlign: 'middle' }}>
-                          <div className="preflight-item-title font-medium">
-                            {row.item}
+                          <div className="preflight-item-title font-medium" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {row.zip_available && (
+                              <span
+                                className="zip-dot"
+                                title="File ZIP mentah tersedia di workstation"
+                              />
+                            )}
+                            <span>{row.item}</span>
                           </div>
                           <div className="preflight-item-sub mono" title={row.path}>
                             {row.path}
@@ -424,9 +451,11 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
                           {row.zip_available && (
                             <span
                               className="badge badge-pass badge-xs"
-                              style={{ marginTop: '0.2rem', display: 'inline-block' }}
+                              style={{ marginTop: '0.2rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              title="File ZIP mentah tersedia di workstation"
                             >
-                              📦 Zip Available
+                              <span className="zip-dot" style={{ width: '5px', height: '5px' }} />
+                              <span>ZIP Mentah</span>
                             </span>
                           )}
                         </td>

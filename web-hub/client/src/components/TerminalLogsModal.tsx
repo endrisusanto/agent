@@ -10,6 +10,7 @@ interface TerminalLogsModalProps {
   jobHistory: ActiveJobItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
   selectedRunId?: string;
+  onSelectRunId?: (runId: string) => void;
 }
 
 export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
@@ -19,22 +20,28 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
   jobHistory,
   onCancelJob,
   selectedRunId,
+  onSelectRunId,
 }) => {
   const allRuns = [...activeJobs, ...jobHistory];
-  const [currentRunId, setCurrentRunId] = useState<string>(
+  const [internalRunId, setInternalRunId] = useState<string>(
     selectedRunId || activeJobs[0]?.run_id || jobHistory[0]?.run_id || ''
   );
+  const currentRunId = selectedRunId !== undefined && selectedRunId !== '' ? selectedRunId : internalRunId;
+  const setRunId = (id: string) => {
+    setInternalRunId(id);
+    if (onSelectRunId) onSelectRunId(id);
+  };
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   // Sync active run ID when new runs appear or when selectedRunId changes
   useEffect(() => {
     if (selectedRunId) {
-      setCurrentRunId(selectedRunId);
+      setInternalRunId(selectedRunId);
     } else if (activeJobs.length > 0 && !activeJobs.some((j) => j.run_id === currentRunId)) {
-      setCurrentRunId(activeJobs[0].run_id);
+      setRunId(activeJobs[0].run_id);
     } else if (!currentRunId && allRuns.length > 0) {
-      setCurrentRunId(allRuns[0].run_id);
+      setRunId(allRuns[0].run_id);
     }
   }, [activeJobs, selectedRunId, allRuns.length]);
 
@@ -87,7 +94,7 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
                 <select
                   className="filter-select terminal-run-select"
                   value={currentRunId}
-                  onChange={(e) => setCurrentRunId(e.target.value)}
+                  onChange={(e) => setRunId(e.target.value)}
                   aria-label="Pilih Sesi Log Terminal"
                 >
                   {allRuns.map((run) => {

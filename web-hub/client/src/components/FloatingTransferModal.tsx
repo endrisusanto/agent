@@ -25,6 +25,8 @@ export interface ActiveTransferItem {
 
 interface FloatingTransferModalProps {
   transfers: ActiveTransferItem[];
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
   onPauseResume?: (id: string) => void;
   onCancel?: (id: string) => void;
   onClose?: () => void;
@@ -40,11 +42,15 @@ function formatBytes(bytes: number): string {
 
 export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
   transfers,
+  isExpanded: controlledExpanded,
+  onToggleExpand,
   onPauseResume,
   onCancel,
   onClose,
 }) => {
-  const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const [internalExpanded, setInternalExpanded] = useState<boolean>(true);
+  const isExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
+  const handleToggle = onToggleExpand || (() => setInternalExpanded(!internalExpanded));
 
   if (!transfers || transfers.length === 0) {
     return null;
@@ -64,7 +70,7 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
       {/* Accordion Header */}
       <div
         className="floating-transfer-header"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={handleToggle}
         role="button"
         tabIndex={0}
       >
@@ -82,7 +88,7 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
           <button
             type="button"
             className="btn-icon btn-xs"
-            onClick={() => setIsExpanded(!isExpanded)}
+            onClick={handleToggle}
             title={isExpanded ? 'Collapse' : 'Expand'}
           >
             {isExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}

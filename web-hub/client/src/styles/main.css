@@ -3360,6 +3360,16 @@ button.btn-running:disabled svg {
   box-shadow: 0 0 6px var(--status-fail-text, #ef4444);
 }
 
+.zip-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--status-pass-text, #10b981);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+  flex-shrink: 0;
+}
+
 .preflight-modal-header {
   display: flex;
   justify-content: space-between;

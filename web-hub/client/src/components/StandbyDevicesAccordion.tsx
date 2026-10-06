@@ -7,6 +7,12 @@ export type TestPlanType = 'SMR' | 'SKU' | 'NORMAL' | 'STS';
 interface StandbyDevicesAccordionProps {
   devices: DeviceItem[];
   selectedSerials: string[];
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
+  activeTestPlan?: TestPlanType;
+  onTestPlanChange?: (plan: TestPlanType) => void;
+  selectedModelFilter?: string;
+  onModelFilterChange?: (model: string) => void;
   onToggleSelect: (serial: string) => void;
   onSelectAll: (serials: string[]) => void;
   onDirectRunSuite: (testType: TestPlanType, targetModel: string, serials: string[]) => void;
@@ -20,6 +26,12 @@ interface StandbyDevicesAccordionProps {
 export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = ({
   devices,
   selectedSerials,
+  isExpanded: controlledExpanded,
+  onToggleExpand,
+  activeTestPlan: controlledTestPlan,
+  onTestPlanChange: controlledOnTestPlanChange,
+  selectedModelFilter: controlledModelFilter,
+  onModelFilterChange: controlledOnModelFilterChange,
   onToggleSelect,
   onSelectAll,
   onDirectRunSuite,
@@ -29,13 +41,24 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   selectedPcFilter = 'ALL',
   filterType = 'all',
 }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [activeTestPlan, setActiveTestPlan] = useState<TestPlanType>('SMR');
-  const [selectedModelFilter, setSelectedModelFilter] = useState<string>('ALL');
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
+  const handleToggleExpand = onToggleExpand || (() => setInternalExpanded(!internalExpanded));
+
+  const [internalTestPlan, setInternalTestPlan] = useState<TestPlanType>('SMR');
+  const activeTestPlan = controlledTestPlan !== undefined ? controlledTestPlan : internalTestPlan;
+
+  const [internalModelFilter, setInternalModelFilter] = useState<string>('ALL');
+  const selectedModelFilter = controlledModelFilter !== undefined ? controlledModelFilter : internalModelFilter;
+  const setSelectedModelFilter = controlledOnModelFilterChange || setInternalModelFilter;
 
   // Handle changing test plan (SMR / SKU / NORMAL / STS)
   const handleTestPlanChange = (plan: TestPlanType) => {
-    setActiveTestPlan(plan);
+    if (controlledOnTestPlanChange) {
+      controlledOnTestPlanChange(plan);
+    } else {
+      setInternalTestPlan(plan);
+    }
     if (plan === 'STS') {
       // Unselect any non-userdebug devices currently selected
       const userdebugSerials = devices
@@ -168,7 +191,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   return (
     <section className="accordion-card standby-card">
       {/* Accordion Header */}
-      <div className="accordion-header standby-accordion-header" onClick={() => setIsExpanded(!isExpanded)}>
+      <div className="accordion-header standby-accordion-header" onClick={handleToggleExpand}>
         <div className="accordion-header-top">
           <div className="accordion-header-left">
             <button

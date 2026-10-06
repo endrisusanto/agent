@@ -9,7 +9,7 @@ mod preflight;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -35,6 +35,272 @@ pub fn send_ws_message(msg: Message) {
         if let Some(tx) = &*guard {
             let _ = tx.send(msg);
         }
+    }
+}
+
+pub fn send_sync_progress(
+    id: &str,
+    transferred_bytes: u64,
+    total_bytes: u64,
+    speed_mbps: f64,
+    status: &str,
+    progress: f64,
+) {
+    let msg = json!({
+        "type": "SYNC_PROGRESS",
+        "id": id,
+        "transferredBytes": transferred_bytes,
+        "totalBytes": total_bytes,
+        "speedMBps": speed_mbps,
+        "status": status,
+        "progress": progress,
+    });
+    send_ws_message(Message::Text(msg.to_string()));
+}
+
+async fn perform_sync_tool(
+    transfer_id: String,
+    resource: String,
+    download_url: String,
+    target_rel_dir: String,
+    auto_root: PathBuf,
+    state: AppState,
+) {
+    log_msg(&state, format!("[Bridge] Starting sync for {} from {}", resource, download_url));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3600))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    // Determine parent directory relative to auto_root
+    let clean_res = resource.replace('\\', "/");
+    let dest_rel = if clean_res.ends_with("/android-gts")
+        || clean_res.ends_with("/android-cts")
+        || clean_res.ends_with("/android-sts")
+    {
+        Path::new(&clean_res).parent().unwrap_or(Path::new(&clean_res)).to_string_lossy().to_string()
+    } else if !target_rel_dir.is_empty() {
+        target_rel_dir
+    } else {
+        clean_res.clone()
+    };
+
+    let dest_parent = auto_root.join(&dest_rel);
+    if let Err(e) = fs::create_dir_all(&dest_parent) {
+        log_msg(&state, format!("[Bridge] Failed to create destination dir {:?}: {}", dest_parent, e));
+        send_sync_progress(&transfer_id, 0, 0, 0.0, "failed", 0.0);
+        return;
+    }
+
+    send_sync_progress(&transfer_id, 0, 0, 0.0, "running", 0.1);
+
+    let res = match client.get(&download_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            log_msg(&state, format!("[Bridge] Download request failed: {}", e));
+            send_sync_progress(&transfer_id, 0, 0, 0.0, "failed", 0.0);
+            return;
+        }
+    };
+
+    if !res.status().is_success() {
+        log_msg(&state, format!("[Bridge] Download returned error status: {}", res.status()));
+        send_sync_progress(&transfer_id, 0, 0, 0.0, "failed", 0.0);
+        return;
+    }
+
+    let total_bytes = res.content_length().unwrap_or(0);
+    let is_tar = res.headers().get("X-Archive-Type").and_then(|v| v.to_str().ok()).unwrap_or("") == "tar.gz"
+        || download_url.contains(".tar.gz");
+
+    let header_filename = res.headers().get("X-Filename")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let raw_filename = if !header_filename.is_empty() {
+        header_filename.to_string()
+    } else {
+        let last_part = Path::new(&clean_res).file_name().unwrap_or_default().to_string_lossy().to_string();
+        if is_tar {
+            format!("{}.tar.gz", last_part)
+        } else {
+            format!("{}.zip", last_part)
+        }
+    };
+
+    let raw_file_path = dest_parent.join(&raw_filename);
+    let temp_file_path = dest_parent.join(format!(".tmp_download_{}", transfer_id));
+
+    let mut file = match tokio::fs::File::create(&temp_file_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            log_msg(&state, format!("[Bridge] Failed to create temp download file: {}", e));
+            send_sync_progress(&transfer_id, 0, 0, 0.0, "failed", 0.0);
+            return;
+        }
+    };
+
+    use tokio::io::AsyncWriteExt;
+    let mut stream = res.bytes_stream();
+    let mut transferred: u64 = 0;
+    let start_time = std::time::Instant::now();
+    let mut last_report = std::time::Instant::now();
+
+    while let Some(chunk_result) = stream.next().await {
+        match chunk_result {
+            Ok(chunk) => {
+                if let Err(e) = file.write_all(&chunk).await {
+                    log_msg(&state, format!("[Bridge] Error writing chunk: {}", e));
+                    let _ = tokio::fs::remove_file(&temp_file_path).await;
+                    send_sync_progress(&transfer_id, transferred, total_bytes, 0.0, "failed", 0.0);
+                    return;
+                }
+                transferred += chunk.len() as u64;
+
+                if last_report.elapsed().as_millis() >= 300 {
+                    let elapsed_secs = start_time.elapsed().as_secs_f64().max(0.001);
+                    let speed = (transferred as f64 / (1024.0 * 1024.0)) / elapsed_secs;
+                    let progress = if total_bytes > 0 {
+                        ((transferred as f64 / total_bytes as f64) * 100.0).min(99.0)
+                    } else {
+                        50.0
+                    };
+                    send_sync_progress(&transfer_id, transferred, total_bytes, speed, "running", progress);
+                    last_report = std::time::Instant::now();
+                }
+            }
+            Err(e) => {
+                log_msg(&state, format!("[Bridge] Stream error: {}", e));
+                let _ = tokio::fs::remove_file(&temp_file_path).await;
+                send_sync_progress(&transfer_id, transferred, total_bytes, 0.0, "failed", 0.0);
+                return;
+            }
+        }
+    }
+
+    let _ = file.flush().await;
+    drop(file);
+
+    // Rename temp file to permanent raw zip/tar file so it is retained!
+    if let Err(e) = tokio::fs::rename(&temp_file_path, &raw_file_path).await {
+        log_msg(&state, format!("[Bridge] Failed to rename temp file to {:?}: {}", raw_file_path, e));
+    }
+
+    log_msg(
+        &state,
+        format!(
+            "[Bridge] Download finished ({} bytes). Preserved raw archive at {:?}. Extracting into {:?}...",
+            transferred, raw_file_path, dest_parent
+        ),
+    );
+
+    // Extract archive while preserving raw zip file
+    let is_sts = clean_res.to_uppercase().contains("STS") || raw_filename.to_uppercase().contains("STS");
+    let mut extract_success = false;
+
+    if is_tar {
+        if let Ok(tar_file) = fs::File::open(&raw_file_path) {
+            let gz = flate2::read::GzDecoder::new(tar_file);
+            let mut archive = tar::Archive::new(gz);
+            extract_success = archive.unpack(&dest_parent).is_ok();
+        }
+    } else {
+        // Zip archive extraction: handle STS password ("sts") and general suites
+        if is_sts {
+            // 1. Try unzip with password "sts"
+            let st = std::process::Command::new("unzip")
+                .args(["-o", "-P", "sts", &raw_file_path.to_string_lossy(), "-d", &dest_parent.to_string_lossy()])
+                .status();
+            if let Ok(s) = st {
+                extract_success = s.success();
+            }
+
+            // 2. Try 7z with password "sts" if unzip failed
+            if !extract_success {
+                let st7z = std::process::Command::new("7z")
+                    .args(["x", "-y", "-psts", &raw_file_path.to_string_lossy(), &format!("-o{}", dest_parent.to_string_lossy())])
+                    .status();
+                if let Ok(s) = st7z {
+                    extract_success = s.success();
+                }
+            }
+
+            // 3. Fallback to standard unzip without password
+            if !extract_success {
+                let st_plain = std::process::Command::new("unzip")
+                    .args(["-o", &raw_file_path.to_string_lossy(), "-d", &dest_parent.to_string_lossy()])
+                    .status();
+                if let Ok(s) = st_plain {
+                    extract_success = s.success();
+                }
+            }
+        } else {
+            // Non-STS suite (CTS, GTS, etc.)
+            let st = std::process::Command::new("unzip")
+                .args(["-o", &raw_file_path.to_string_lossy(), "-d", &dest_parent.to_string_lossy()])
+                .status();
+            if let Ok(s) = st {
+                extract_success = s.success();
+            }
+
+            if !extract_success {
+                let st_pass = std::process::Command::new("unzip")
+                    .args(["-o", "-P", "sts", &raw_file_path.to_string_lossy(), "-d", &dest_parent.to_string_lossy()])
+                    .status();
+                if let Ok(s) = st_pass {
+                    extract_success = s.success();
+                }
+            }
+
+            if !extract_success {
+                if let Ok(zfile) = fs::File::open(&raw_file_path) {
+                    if let Ok(mut archive) = zip::ZipArchive::new(zfile) {
+                        extract_success = archive.extract(&dest_parent).is_ok();
+                    }
+                }
+            }
+        }
+    }
+
+    if extract_success {
+        // Ensure results and subplans directories exist inside extracted suite directories (e.g. CTS/14_r13/android-cts/results/)
+        let sub_dirs = ["android-cts", "android-gts", "android-sts"];
+        for sub in &sub_dirs {
+            let suite_path = dest_parent.join(sub);
+            if suite_path.is_dir() {
+                let _ = fs::create_dir_all(suite_path.join("results"));
+                let _ = fs::create_dir_all(suite_path.join("subplans"));
+            }
+        }
+        let _ = fs::create_dir_all(dest_parent.join("results"));
+
+        let _ = std::process::Command::new("chmod")
+            .args(["-R", "+x", &dest_parent.to_string_lossy()])
+            .output();
+
+        log_msg(
+            &state,
+            format!(
+                "[Bridge] Successfully extracted and created results directory for {} (raw zip preserved at {:?})",
+                resource, raw_file_path
+            ),
+        );
+        send_sync_progress(&transfer_id, transferred, total_bytes, 0.0, "completed", 100.0);
+
+        let (pc_id, auto_root_path) = {
+            let cfg = state.config.lock().unwrap();
+            (cfg.pc_id.clone(), PathBuf::from(&cfg.auto_root))
+        };
+        let rep = preflight::run_preflight_check(&auto_root_path, &pc_id);
+        let p_msg = json!({
+            "type": "PREFLIGHT_REPORT",
+            "pcId": pc_id,
+            "report": rep,
+        });
+        send_ws_message(Message::Text(p_msg.to_string()));
+    } else {
+        log_msg(&state, format!("[Bridge] Extraction failed for archive {:?}", raw_file_path));
+        send_sync_progress(&transfer_id, transferred, total_bytes, 0.0, "failed", 0.0);
     }
 }
 
@@ -379,6 +645,36 @@ async fn run_bridge_worker(state: AppState) {
                                                 });
                                                 let _ = write.send(Message::Text(p_msg.to_string())).await;
                                                 log_msg(&state, format!("[Bridge] Sent on-demand Preflight Report ({} items)", report.items.len()));
+                                            }
+
+                                            "CMD_SYNC_TOOL" => {
+                                                let transfer_id = val.get("id").and_then(|v| v.as_str()).unwrap_or("tr-unknown").to_string();
+                                                let resource = val.get("resource").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                                let target_rel_dir = val.get("target_rel_dir").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                                
+                                                let hub_http_base = hub_url
+                                                    .replace("ws://", "http://")
+                                                    .replace("wss://", "https://")
+                                                    .replace("/ws/bridge", "");
+
+                                                let download_url = val.get("download_url")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string())
+                                                    .unwrap_or_else(|| format!("{}/api/sync/file?path={}", hub_http_base, resource));
+
+                                                let auto_root_cloned = auto_root.clone();
+                                                let state_cloned = state.clone();
+
+                                                tokio::spawn(async move {
+                                                    perform_sync_tool(
+                                                        transfer_id,
+                                                        resource,
+                                                        download_url,
+                                                        target_rel_dir,
+                                                        auto_root_cloned,
+                                                        state_cloned,
+                                                    ).await;
+                                                });
                                             }
 
                                             _ => {}

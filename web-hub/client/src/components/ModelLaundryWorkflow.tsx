@@ -13,6 +13,10 @@ export interface LaundryWorkflowState {
   ap_version?: string;
   plan?: string;
   cachedRows?: LaundryRow[];
+  isExpanded?: boolean;
+  isLaundryExpanded?: boolean;
+  isDevicesExpanded?: boolean;
+  isResultsExpanded?: boolean;
 }
 
 import { formatDurationHms } from '../utils/formatters';
@@ -80,10 +84,15 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   onRunSuite,
   onToggleLamp,
 }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [isLaundryExpanded, setIsLaundryExpanded] = useState(true);
-  const [isDevicesExpanded, setIsDevicesExpanded] = useState(true);
-  const [isResultsExpanded, setIsResultsExpanded] = useState(true);
+  const isExpanded = workflow.isExpanded !== undefined ? workflow.isExpanded : true;
+  const isLaundryExpanded = workflow.isLaundryExpanded !== undefined ? workflow.isLaundryExpanded : true;
+  const isDevicesExpanded = workflow.isDevicesExpanded !== undefined ? workflow.isDevicesExpanded : true;
+  const isResultsExpanded = workflow.isResultsExpanded !== undefined ? workflow.isResultsExpanded : true;
+
+  const toggleExpanded = () => onUpdateWorkflow({ ...workflow, isExpanded: !isExpanded });
+  const toggleLaundryExpanded = () => onUpdateWorkflow({ ...workflow, isLaundryExpanded: !isLaundryExpanded });
+  const toggleDevicesExpanded = () => onUpdateWorkflow({ ...workflow, isDevicesExpanded: !isDevicesExpanded });
+  const toggleResultsExpanded = () => onUpdateWorkflow({ ...workflow, isResultsExpanded: !isResultsExpanded });
 
   const [, setLiveTick] = useState(0);
   useEffect(() => {
@@ -242,7 +251,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       timeout_secs: 86400,
     });
 
-    setIsExpanded(false);
+    onUpdateWorkflow({ ...workflow, isExpanded: false });
   };
 
   const planName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
@@ -395,7 +404,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   return (
     <div className="accordion-card">
       {/* Root Accordion Header */}
-      <div className="accordion-header" onClick={() => setIsExpanded(!isExpanded)}>
+      <div className="accordion-header" onClick={toggleExpanded}>
         <div className="accordion-header-top">
           <div className="accordion-header-left">
             <button
@@ -459,7 +468,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
           <div className="sub-accordion">
             <div
               className="sub-accordion-header"
-              onClick={() => setIsLaundryExpanded(!isLaundryExpanded)}
+              onClick={toggleLaundryExpanded}
             >
               <div className="sub-accordion-title">
                 {isLaundryExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
@@ -746,7 +755,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
           <div className="sub-accordion">
             <div
               className="sub-accordion-header"
-              onClick={() => setIsDevicesExpanded(!isDevicesExpanded)}
+              onClick={toggleDevicesExpanded}
             >
               <div className="sub-accordion-title">
                 {isDevicesExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
@@ -856,7 +865,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
           <div className="sub-accordion">
             <div
               className="sub-accordion-header"
-              onClick={() => setIsResultsExpanded(!isResultsExpanded)}
+              onClick={toggleResultsExpanded}
             >
               <div className="sub-accordion-title">
                 {isResultsExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}

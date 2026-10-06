@@ -13,10 +13,6 @@ import { FloatingTransferModal, ActiveTransferItem } from './components/Floating
 import { LaundryWorkflowState, isModelMatch, detectZipPlanKind } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('gba_theme') as 'dark' | 'light') || 'dark';
-  });
-
   const {
     bridges,
     devices,
@@ -24,6 +20,13 @@ export const App: React.FC = () => {
     jobHistory,
     workflows: serverWorkflows,
     syncWorkflows,
+    uiState,
+    updateUiState,
+    transfers,
+    startTransfer,
+    pauseResumeTransfer,
+    cancelTransfer,
+    closeTransferModal,
     preflightReports,
     triggerPreflightCheck,
     laundryAnalysis,
@@ -36,83 +39,22 @@ export const App: React.FC = () => {
     clearHistory,
   } = useFleetWebSocket();
 
-  const [selectedStandbySerials, setSelectedStandbySerials] = useState<string[]>([]);
-  const [isLaundryModalOpen, setIsLaundryModalOpen] = useState(false);
-  const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
-  const [isPreflightModalOpen, setIsPreflightModalOpen] = useState(false);
-  const [activeWorkflowIdForPicker, setActiveWorkflowIdForPicker] = useState<string>('');
-  const [pickerPcId, setPickerPcId] = useState<string>('');
+  const theme = uiState.theme || 'dark';
 
-  // Floating transfer states
-  const [activeTransfers, setActiveTransfers] = useState<ActiveTransferItem[]>([]);
-
-  // Simulation / progression ticker for active transfers
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveTransfers((prev) => {
-        if (prev.length === 0) return prev;
-        return prev.map((t) => {
-          if (t.status !== 'running') return t;
-          const chunk = Math.min(t.totalBytes - t.transferredBytes, (t.speedMBps * 1024 * 1024) / 4);
-          const nextTransferred = t.transferredBytes + chunk;
-          const nextProgress = Math.min(100, (nextTransferred / t.totalBytes) * 100);
-          const isDone = nextProgress >= 100;
-          return {
-            ...t,
-            transferredBytes: nextTransferred,
-            progress: nextProgress,
-            status: isDone ? 'completed' : 'running',
-          };
-        });
-      });
-    }, 250);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleStartTransfer = (sourceNode: string, targetNode: string, resourceName: string) => {
-    const isZip = resourceName.endsWith('.zip') || resourceName.includes('OXM');
-    const totalBytes = isZip ? 16.34 * 1024 * 1024 * 1024 : 1.2 * 1024 * 1024 * 1024;
-    const newTransfer: ActiveTransferItem = {
-      id: `tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type: isZip ? 'firmware' : 'tools',
-      sourceNode: sourceNode || 'Endri',
-      targetNode: targetNode || 'ubuntu-gba-pro',
-      filename: resourceName.startsWith('CTS') || resourceName.startsWith('GTS') || resourceName.startsWith('STS')
-        ? resourceName
-        : `ALL_OXM_${resourceName}_S911BXXUAGZIF_S911B01.zip`,
-      totalBytes,
-      transferredBytes: totalBytes * 0.002,
-      speedMBps: 6.2 + Math.random() * 2.5,
-      status: 'running',
-      progress: 0.2,
-    };
-
-    setActiveTransfers((prev) => [newTransfer, ...prev]);
+  const toggleTheme = () => {
+    updateUiState({ theme: theme === 'dark' ? 'light' : 'dark' });
   };
 
-  const handlePauseResumeTransfer = (id: string) => {
-    setActiveTransfers((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          return {
-            ...t,
-            status: t.status === 'running' ? 'paused' : 'running',
-          };
-        }
-        return t;
-      })
-    );
-  };
-
-  const handleCancelTransfer = (id: string) => {
-    setActiveTransfers((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  // Top Card Filter States
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPcFilter, setSelectedPcFilter] = useState<string>('ALL');
-  const [selectedModeFilter, setSelectedModeFilter] = useState<'all' | 'user' | 'userdebug' | 'busy'>('all');
+  const isLaundryModalOpen = uiState.isLaundryModalOpen;
+  const isTerminalModalOpen = uiState.isTerminalModalOpen;
+  const isPreflightModalOpen = uiState.isPreflightModalOpen;
+  const activeWorkflowIdForPicker = uiState.activeWorkflowIdForPicker;
+  const pickerPcId = uiState.pickerPcId;
+  const selectedStandbySerials = uiState.selectedStandbySerials || [];
+  const searchQuery = uiState.searchQuery || '';
+  const selectedPcFilter = uiState.selectedPcFilter || 'ALL';
+  const selectedModeFilter = uiState.selectedModeFilter || 'all';
+  const terminalSelectedRunId = uiState.terminalSelectedRunId || '';
 
   const runningSectionRef = useRef<HTMLDivElement>(null);
 
@@ -163,10 +105,6 @@ export const App: React.FC = () => {
     localStorage.setItem('gba_theme', theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
-
   // Workflow Handlers
   const handleUpdateWorkflow = (updated: LaundryWorkflowState) => {
     const next = workflows.map((w) => (w.id === updated.id ? updated : w));
@@ -194,18 +132,27 @@ export const App: React.FC = () => {
   };
 
   const handleOpenLaundryPicker = (workflowId: string, pcId?: string) => {
-    setActiveWorkflowIdForPicker(workflowId);
-    setPickerPcId(pcId || (bridges[0]?.pcId ?? ''));
-    setIsLaundryModalOpen(true);
+    updateUiState({
+      isLaundryModalOpen: true,
+      activeWorkflowIdForPicker: workflowId,
+      pickerPcId: pcId || (bridges[0]?.pcId ?? ''),
+    });
   };
 
-  const [terminalSelectedRunId, setTerminalSelectedRunId] = useState<string>('');
+  const setTerminalSelectedRunId = (runId: string) => {
+    updateUiState({ terminalSelectedRunId: runId });
+  };
 
   // Standby Devices Handlers
   const handleToggleSelectStandbyDevice = (serial: string) => {
-    setSelectedStandbySerials((prev) =>
-      prev.includes(serial) ? prev.filter((s) => s !== serial) : [...prev, serial]
-    );
+    const next = selectedStandbySerials.includes(serial)
+      ? selectedStandbySerials.filter((s) => s !== serial)
+      : [...selectedStandbySerials, serial];
+    updateUiState({ selectedStandbySerials: next });
+  };
+
+  const handleSelectAllStandbyDevices = (serials: string[]) => {
+    updateUiState({ selectedStandbySerials: serials });
   };
 
   // Direct suite execution (1 Model, 1 Testplan: SMR, SKU, NORMAL, STS)
@@ -277,21 +224,21 @@ export const App: React.FC = () => {
         activeJobsCount={activeJobs.length}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onOpenPreflight={() => setIsPreflightModalOpen(true)}
+        onOpenPreflight={() => updateUiState({ isPreflightModalOpen: true })}
         preflightIssueCount={preflightIssueCount}
       />
       <main className="main-content">
         {/* Standalone Filter Toolbar Card at Top */}
         <FilterToolbarCard
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
+          onSearchChange={(q) => updateUiState({ searchQuery: q })}
           selectedPcId={selectedPcFilter}
-          onPcIdChange={setSelectedPcFilter}
+          onPcIdChange={(pc) => updateUiState({ selectedPcFilter: pc })}
           selectedMode={selectedModeFilter}
-          onModeChange={setSelectedModeFilter}
+          onModeChange={(m) => updateUiState({ selectedModeFilter: m })}
           bridges={bridges}
           activeJobsCount={activeJobs.length}
-          onToggleTerminalLogs={() => setIsTerminalModalOpen(true)}
+          onToggleTerminalLogs={() => updateUiState({ isTerminalModalOpen: true })}
         />
 
         {/* Active Running Test Suites & Live Logs */}
@@ -324,8 +271,14 @@ export const App: React.FC = () => {
         <StandbyDevicesAccordion
           devices={devices}
           selectedSerials={selectedStandbySerials}
+          isExpanded={uiState.standbyExpanded}
+          onToggleExpand={() => updateUiState({ standbyExpanded: !uiState.standbyExpanded })}
+          activeTestPlan={uiState.standbyTestPlan}
+          onTestPlanChange={(plan) => updateUiState({ standbyTestPlan: plan })}
+          selectedModelFilter={uiState.standbyModelFilter}
+          onModelFilterChange={(model) => updateUiState({ standbyModelFilter: model })}
           onToggleSelect={handleToggleSelectStandbyDevice}
-          onSelectAll={setSelectedStandbySerials}
+          onSelectAll={handleSelectAllStandbyDevices}
           onDirectRunSuite={handleDirectRunSuite}
           onToggleLamp={setDeviceLamp}
           onResetBusy={resetBusy}
@@ -337,6 +290,8 @@ export const App: React.FC = () => {
         {/* Results History */}
         <ResultsExplorer
           history={jobHistory}
+          isExpanded={uiState.resultsExpanded}
+          onToggleExpand={() => updateUiState({ resultsExpanded: !uiState.resultsExpanded })}
           onDeleteHistoryItem={deleteHistoryItem}
           onClearAllHistory={clearHistory}
         />
@@ -344,7 +299,7 @@ export const App: React.FC = () => {
         {/* Laundry Zip Modal Picker */}
         <LaundrySelectModal
           isOpen={isLaundryModalOpen}
-          onClose={() => setIsLaundryModalOpen(false)}
+          onClose={() => updateUiState({ isLaundryModalOpen: false })}
           pcId={pickerPcId || activePickerBridge?.pcId || 'LOCAL'}
           zips={zipsForPicker}
           devices={devices}
@@ -405,6 +360,7 @@ export const App: React.FC = () => {
                   selectedModules: allModuleNames,
                   selectedSerials: matchingDevs.map((d) => d.serial),
                 });
+                updateUiState({ isLaundryModalOpen: false });
               }
             }
           }}
@@ -413,29 +369,43 @@ export const App: React.FC = () => {
         {/* Terminal Logs Modal */}
         <TerminalLogsModal
           isOpen={isTerminalModalOpen}
-          onClose={() => setIsTerminalModalOpen(false)}
+          onClose={() => updateUiState({ isTerminalModalOpen: false })}
           activeJobs={activeJobs}
           jobHistory={jobHistory}
           selectedRunId={terminalSelectedRunId}
+          onSelectRunId={(runId) => updateUiState({ terminalSelectedRunId: runId })}
           onCancelJob={cancelRun}
         />
 
         {/* Preflight Check Modal */}
         <PreflightModal
           isOpen={isPreflightModalOpen}
-          onClose={() => setIsPreflightModalOpen(false)}
+          onClose={() => updateUiState({ isPreflightModalOpen: false })}
           preflightReports={preflightReports}
           bridges={bridges}
           onTriggerScan={triggerPreflightCheck}
-          onStartSync={handleStartTransfer}
+          onStartSync={startTransfer}
+          selectedNodeFilter={uiState.preflightSelectedNode}
+          onNodeFilterChange={(node) => updateUiState({ preflightSelectedNode: node })}
+          searchQuery={uiState.preflightSearch}
+          onSearchChange={(q) => updateUiState({ preflightSearch: q })}
+          statusFilter={uiState.preflightStatusFilter}
+          onStatusFilterChange={(s) => updateUiState({ preflightStatusFilter: s })}
         />
 
         {/* Floating Accordion Transfer Modal (Bottom-Left) */}
-        <FloatingTransferModal
-          transfers={activeTransfers}
-          onPauseResume={handlePauseResumeTransfer}
-          onCancel={handleCancelTransfer}
-        />
+        {uiState.transferModalOpen && (
+          <FloatingTransferModal
+            transfers={transfers}
+            isExpanded={uiState.transferModalExpanded}
+            onToggleExpand={() =>
+              updateUiState({ transferModalExpanded: !uiState.transferModalExpanded })
+            }
+            onPauseResume={pauseResumeTransfer}
+            onCancel={cancelTransfer}
+            onClose={closeTransferModal}
+          />
+        )}
       </main>
     </div>
   );

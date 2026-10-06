@@ -94,6 +94,52 @@ export interface LaundryWorkflowState {
   ap_version?: string;
   plan?: string;
   cachedRows?: LaundryRow[];
+  isExpanded?: boolean;
+  isLaundryExpanded?: boolean;
+  isDevicesExpanded?: boolean;
+  isResultsExpanded?: boolean;
+}
+
+export interface ActiveTransferItem {
+  id: string;
+  type: 'tools' | 'firmware';
+  sourceNode: string;
+  targetNode: string;
+  filename: string;
+  totalBytes: number;
+  transferredBytes: number;
+  speedMBps: number;
+  status: 'running' | 'paused' | 'completed' | 'cancelled';
+  progress: number;
+}
+
+export interface UnifiedUiState {
+  theme: 'dark' | 'light';
+  // Filters & Top Bar
+  searchQuery: string;
+  selectedPcFilter: string;
+  selectedModeFilter: 'all' | 'user' | 'userdebug' | 'busy';
+  // Accordions
+  standbyExpanded: boolean;
+  resultsExpanded: boolean;
+  // Standby selections
+  selectedStandbySerials: string[];
+  standbyTestPlan: 'SMR' | 'SKU' | 'NORMAL' | 'STS';
+  standbyModelFilter: string;
+  // Modals Visibility
+  isPreflightModalOpen: boolean;
+  isTerminalModalOpen: boolean;
+  isLaundryModalOpen: boolean;
+  activeWorkflowIdForPicker: string;
+  pickerPcId: string;
+  terminalSelectedRunId: string;
+  // Floating Transfer Modal
+  transferModalOpen: boolean;
+  transferModalExpanded: boolean;
+  // Preflight filters
+  preflightSelectedNode: string;
+  preflightSearch: string;
+  preflightStatusFilter: 'ALL' | 'ISSUES' | 'OK';
 }
 
 export interface PreflightItem {
@@ -124,6 +170,29 @@ export function useFleetWebSocket() {
   const [jobHistory, setJobHistory] = useState<ActiveJobItem[]>([]);
   const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>([]);
   const [preflightReports, setPreflightReports] = useState<PreflightReport[]>([]);
+  const [uiState, setUiState] = useState<UnifiedUiState>({
+    theme: (localStorage.getItem('gba_theme') as 'dark' | 'light') || 'dark',
+    searchQuery: '',
+    selectedPcFilter: 'ALL',
+    selectedModeFilter: 'all',
+    standbyExpanded: false,
+    resultsExpanded: true,
+    selectedStandbySerials: [],
+    standbyTestPlan: 'SMR',
+    standbyModelFilter: 'ALL',
+    isPreflightModalOpen: false,
+    isTerminalModalOpen: false,
+    isLaundryModalOpen: false,
+    activeWorkflowIdForPicker: '',
+    pickerPcId: '',
+    terminalSelectedRunId: '',
+    transferModalOpen: false,
+    transferModalExpanded: true,
+    preflightSelectedNode: 'ALL',
+    preflightSearch: '',
+    preflightStatusFilter: 'ALL',
+  });
+  const [transfers, setTransfers] = useState<ActiveTransferItem[]>([]);
   const [laundryAnalysis, setLaundryAnalysis] = useState<{
     pcId: string;
     zip_path: string;
@@ -160,6 +229,12 @@ export function useFleetWebSocket() {
             }
             if (Array.isArray(msg.preflightReports)) {
               setPreflightReports(msg.preflightReports);
+            }
+            if (msg.uiState && typeof msg.uiState === 'object') {
+              setUiState((prev) => ({ ...prev, ...msg.uiState }));
+            }
+            if (Array.isArray(msg.transfers)) {
+              setTransfers(msg.transfers);
             }
 
             const enrichedActive: ActiveJobItem[] = (msg.activeJobs || []).map((j: ActiveJobItem) => {
@@ -332,6 +407,80 @@ export function useFleetWebSocket() {
     }).catch(() => {});
   }, []);
 
+  const updateUiState = useCallback((partial: Partial<UnifiedUiState>) => {
+    setUiState((prev) => {
+      const next = { ...prev, ...partial };
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'SYNC_UI_STATE', uiState: next }));
+      }
+      fetch('/api/ui-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uiState: next }),
+      }).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const startTransfer = useCallback(
+    (sourceNode: string, targetNode: string, resourceName: string) => {
+      const isZip = resourceName.endsWith('.zip') || resourceName.includes('OXM');
+      const totalBytes = isZip ? 16.34 * 1024 * 1024 * 1024 : 1.2 * 1024 * 1024 * 1024;
+      const newTransfer: ActiveTransferItem = {
+        id: `tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: isZip ? 'firmware' : 'tools',
+        sourceNode: sourceNode || 'Endri',
+        targetNode: targetNode || 'ubuntu-gba-pro',
+        filename:
+          resourceName.startsWith('CTS') ||
+          resourceName.startsWith('GTS') ||
+          resourceName.startsWith('STS')
+            ? resourceName
+            : `ALL_OXM_${resourceName}_S911BXXUAGZIF_S911B01.zip`,
+        totalBytes,
+        transferredBytes: totalBytes * 0.002,
+        speedMBps: 6.2 + Math.random() * 2.5,
+        status: 'running',
+        progress: 0.2,
+      };
+
+      setTransfers((prev) => [newTransfer, ...prev]);
+      updateUiState({ transferModalOpen: true });
+
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'START_TRANSFER', transfer: newTransfer }));
+      }
+    },
+    [updateUiState]
+  );
+
+  const pauseResumeTransfer = useCallback((id: string) => {
+    setTransfers((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, status: t.status === 'running' ? 'paused' : 'running' } : t))
+    );
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'PAUSE_RESUME_TRANSFER', id }));
+    }
+  }, []);
+
+  const cancelTransfer = useCallback((id: string) => {
+    setTransfers((prev) => prev.filter((t) => t.id !== id));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'CANCEL_TRANSFER', id }));
+    }
+  }, []);
+
+  const clearCompletedTransfers = useCallback(() => {
+    setTransfers((prev) => prev.filter((t) => t.status !== 'completed' && t.status !== 'cancelled'));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'CLEAR_COMPLETED_TRANSFERS' }));
+    }
+  }, []);
+
+  const closeTransferModal = useCallback(() => {
+    updateUiState({ transferModalOpen: false });
+  }, [updateUiState]);
+
   return {
     isConnected,
     bridges,
@@ -341,6 +490,14 @@ export function useFleetWebSocket() {
     workflows,
     setWorkflows,
     syncWorkflows,
+    uiState,
+    updateUiState,
+    transfers,
+    startTransfer,
+    pauseResumeTransfer,
+    cancelTransfer,
+    clearCompletedTransfers,
+    closeTransferModal,
     preflightReports,
     triggerPreflightCheck,
     laundryAnalysis,
@@ -351,6 +508,6 @@ export function useFleetWebSocket() {
     setDeviceLamp,
     analyzeLaundry,
     deleteHistoryItem,
-    clearHistory
+    clearHistory,
   };
 }

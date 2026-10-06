@@ -17,16 +17,22 @@ interface ServerZipItem {
 
 interface ResultsExplorerProps {
   history: ActiveJobItem[];
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
   onDeleteHistoryItem?: (run_id: string) => void;
   onClearAllHistory?: () => void;
 }
 
 export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
   history,
+  isExpanded: controlledExpanded,
+  onToggleExpand,
   onDeleteHistoryItem,
   onClearAllHistory,
 }) => {
-  const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const [internalExpanded, setInternalExpanded] = useState<boolean>(true);
+  const isExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
+  const handleToggleExpand = onToggleExpand || (() => setInternalExpanded(!internalExpanded));
   const [serverZips, setServerZips] = useState<ServerZipItem[]>([]);
 
   useEffect(() => {
@@ -57,7 +63,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
     <section className="accordion-card history-accordion-card">
       <div
         className="accordion-header"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={handleToggleExpand}
         style={{ cursor: 'pointer', userSelect: 'none' }}
       >
         <div className="accordion-header-top" style={{ width: '100%' }}>

@@ -1,5 +1,7 @@
 import http from 'http';
+import fs from 'fs';
 import path from 'path';
+import child_process, { spawn } from 'child_process';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -97,6 +99,52 @@ export interface LaundryWorkflowState {
   ap_version?: string;
   plan?: string;
   cachedRows?: any[];
+  isExpanded?: boolean;
+  isLaundryExpanded?: boolean;
+  isDevicesExpanded?: boolean;
+  isResultsExpanded?: boolean;
+}
+
+export interface ActiveTransferItem {
+  id: string;
+  type: 'tools' | 'firmware';
+  sourceNode: string;
+  targetNode: string;
+  filename: string;
+  totalBytes: number;
+  transferredBytes: number;
+  speedMBps: number;
+  status: 'running' | 'paused' | 'completed' | 'cancelled';
+  progress: number;
+}
+
+export interface UnifiedUiState {
+  theme: 'dark' | 'light';
+  // Filters & Top Bar
+  searchQuery: string;
+  selectedPcFilter: string;
+  selectedModeFilter: 'all' | 'user' | 'userdebug' | 'busy';
+  // Accordions
+  standbyExpanded: boolean;
+  resultsExpanded: boolean;
+  // Standby selections
+  selectedStandbySerials: string[];
+  standbyTestPlan: 'SMR' | 'SKU' | 'NORMAL' | 'STS';
+  standbyModelFilter: string;
+  // Modals Visibility
+  isPreflightModalOpen: boolean;
+  isTerminalModalOpen: boolean;
+  isLaundryModalOpen: boolean;
+  activeWorkflowIdForPicker: string;
+  pickerPcId: string;
+  terminalSelectedRunId: string;
+  // Floating Transfer Modal
+  transferModalOpen: boolean;
+  transferModalExpanded: boolean;
+  // Preflight filters
+  preflightSelectedNode: string;
+  preflightSearch: string;
+  preflightStatusFilter: 'ALL' | 'ISSUES' | 'OK';
 }
 
 export function formatDurationHms(val: number | string | undefined | null): string {
@@ -146,9 +194,6 @@ export function formatDurationHms(val: number | string | undefined | null): stri
 
   return str;
 }
-
-import fs from 'fs';
-import child_process from 'child_process';
 
 function extractModelFromFilename(filename: string): string | undefined {
   const smMatch = filename.match(/\b(SM-[A-Za-z0-9]+)\b/i) || filename.match(/(SM-[A-Za-z0-9]+)/i);
@@ -336,6 +381,33 @@ export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'End
 
 const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || '/run/media/endri-pro/BINARY_HDD/AUTO/workflows_state.json';
 const FALLBACK_WORKFLOWS_FILE = path.join(__dirname, '../workflows_state.json');
+const UI_STATE_FILE = process.env.UI_STATE_FILE || '/tmp/gba_ui_state.json';
+const TRANSFERS_FILE = process.env.TRANSFERS_FILE || '/tmp/gba_transfers.json';
+
+let serverUiState: UnifiedUiState = {
+  theme: 'dark',
+  searchQuery: '',
+  selectedPcFilter: 'ALL',
+  selectedModeFilter: 'all',
+  standbyExpanded: false,
+  resultsExpanded: true,
+  selectedStandbySerials: [],
+  standbyTestPlan: 'SMR',
+  standbyModelFilter: 'ALL',
+  isPreflightModalOpen: false,
+  isTerminalModalOpen: false,
+  isLaundryModalOpen: false,
+  activeWorkflowIdForPicker: '',
+  pickerPcId: '',
+  terminalSelectedRunId: '',
+  transferModalOpen: false,
+  transferModalExpanded: true,
+  preflightSelectedNode: 'ALL',
+  preflightSearch: '',
+  preflightStatusFilter: 'ALL',
+};
+
+let serverActiveTransfers: ActiveTransferItem[] = [];
 
 function loadWorkflowsFromDisk(): void {
   try {
@@ -372,6 +444,34 @@ function saveWorkflowsToDisk(wfs: LaundryWorkflowState[]): void {
   }
 }
 
+function loadUiStateFromDisk(): void {
+  try {
+    if (fs.existsSync(UI_STATE_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(UI_STATE_FILE, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        serverUiState = { ...serverUiState, ...parsed };
+      }
+    }
+    if (fs.existsSync(TRANSFERS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(TRANSFERS_FILE, 'utf8'));
+      if (Array.isArray(parsed)) {
+        serverActiveTransfers = parsed;
+      }
+    }
+  } catch (err) {
+    console.error('[Hub] Failed to load UI state from disk:', err);
+  }
+}
+
+function saveUiStateToDisk(): void {
+  try {
+    fs.writeFileSync(UI_STATE_FILE, JSON.stringify(serverUiState, null, 2), 'utf8');
+    fs.writeFileSync(TRANSFERS_FILE, JSON.stringify(serverActiveTransfers, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[Hub] Failed to save UI state to disk:', err);
+  }
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -381,6 +481,22 @@ app.get('/api/workflows', (_req, res) => {
   res.json({ workflows: serverWorkflows });
 });
 
+// REST: Unified UI State API
+app.get('/api/ui-state', (_req, res) => {
+  res.json({ uiState: serverUiState, transfers: serverActiveTransfers });
+});
+
+app.post('/api/ui-state', (req, res) => {
+  const { uiState } = req.body;
+  if (uiState && typeof uiState === 'object') {
+    serverUiState = { ...serverUiState, ...uiState };
+    saveUiStateToDisk();
+    broadcastFleetState();
+    return res.json({ success: true, uiState: serverUiState });
+  }
+  return res.status(400).json({ error: 'Expected uiState object' });
+});
+
 app.get('/api/preflight/list', (_req, res) => {
   if (preflightReports.size === 0) {
     const autoRoot = process.env.AUTO_ROOT || '/run/media/endri-pro/BINARY_HDD/AUTO';
@@ -388,6 +504,73 @@ app.get('/api/preflight/list', (_req, res) => {
     preflightReports.set('Endri Ubuntu', localRep);
   }
   res.json({ reports: Array.from(preflightReports.values()) });
+});
+
+app.get('/api/sync/file', (req, res) => {
+  const reqPath = String(req.query.path || '').trim().replace(/^\/+/, '');
+  if (!reqPath) {
+    return res.status(400).send('Missing path parameter');
+  }
+
+  const possibleRoots = [
+    process.env.AUTO_ROOT,
+    '/run/media/endri-pro/BINARY_HDD/AUTO',
+    '/auto',
+  ].filter((r): r is string => Boolean(r));
+
+  let autoRoot = '/run/media/endri-pro/BINARY_HDD/AUTO';
+  for (const r of possibleRoots) {
+    if (fs.existsSync(r)) {
+      autoRoot = r;
+      break;
+    }
+  }
+
+  // 1. Direct file match
+  const fullTarget = path.join(autoRoot, reqPath);
+  if (fs.existsSync(fullTarget) && fs.statSync(fullTarget).isFile()) {
+    const filename = path.basename(fullTarget);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('X-Filename', filename);
+    return res.sendFile(fullTarget);
+  }
+
+  // 2. Search for matching .zip file in parent folder or directory
+  const parentDir = path.dirname(fullTarget);
+  const candidatesDirs = [parentDir, fullTarget].filter((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
+
+  for (const cDir of candidatesDirs) {
+    try {
+      const files = fs.readdirSync(cDir);
+      const zipFiles = files.filter((f) => f.toLowerCase().endsWith('.zip'));
+      if (zipFiles.length > 0) {
+        const suitePrefix = path.basename(reqPath).toLowerCase().replace(/android-/, '');
+        const bestZip = zipFiles.find((f) => f.toLowerCase().includes(suitePrefix)) || zipFiles[0];
+        const zipFullPath = path.join(cDir, bestZip);
+        res.setHeader('Content-Disposition', `attachment; filename="${bestZip}"`);
+        res.setHeader('X-Filename', bestZip);
+        res.setHeader('Content-Type', 'application/zip');
+        return res.sendFile(zipFullPath);
+      }
+    } catch (_) {}
+  }
+
+  // 3. If directory exists without zip, stream tar.gz
+  if (fs.existsSync(fullTarget) && fs.statSync(fullTarget).isDirectory()) {
+    const baseName = path.basename(fullTarget);
+    const tarName = `${baseName}.tar.gz`;
+    res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
+    res.setHeader('X-Filename', tarName);
+    res.setHeader('X-Archive-Type', 'tar.gz');
+    res.setHeader('Content-Type', 'application/gzip');
+
+    const tarProc = spawn('tar', ['-czf', '-', '-C', path.dirname(fullTarget), baseName]);
+    tarProc.stdout.pipe(res);
+    tarProc.stderr.on('data', (err) => console.error('[Sync tar error]', err.toString()));
+    return;
+  }
+
+  return res.status(404).send(`Tool resource not found: ${reqPath}`);
 });
 
 app.post('/api/workflows', (req, res) => {
@@ -996,7 +1179,9 @@ function broadcastFleetState() {
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50),
     workflows: serverWorkflows,
-    preflightReports: Array.from(preflightReports.values())
+    preflightReports: Array.from(preflightReports.values()),
+    uiState: serverUiState,
+    transfers: serverActiveTransfers
   });
 
   for (const client of wssUi.clients) {
@@ -1199,6 +1384,28 @@ wssBridge.on('connection', (ws, req) => {
           break;
         }
 
+        case 'SYNC_PROGRESS': {
+          const { id, transferredBytes, totalBytes, speedMBps, status, progress } = msg;
+          if (id) {
+            serverActiveTransfers = serverActiveTransfers.map((t) => {
+              if (t.id === id) {
+                return {
+                  ...t,
+                  transferredBytes: transferredBytes ?? t.transferredBytes,
+                  totalBytes: totalBytes && totalBytes > 0 ? totalBytes : t.totalBytes,
+                  speedMBps: speedMBps ?? t.speedMBps,
+                  status: status || t.status,
+                  progress: progress ?? t.progress,
+                };
+              }
+              return t;
+            });
+            saveUiStateToDisk();
+            broadcastFleetState();
+          }
+          break;
+        }
+
         default:
           break;
       }
@@ -1248,7 +1455,9 @@ wssUi.on('connection', (ws) => {
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50),
     workflows: serverWorkflows,
-    preflightReports: Array.from(preflightReports.values())
+    preflightReports: Array.from(preflightReports.values()),
+    uiState: serverUiState,
+    transfers: serverActiveTransfers
   }));
 
   ws.on('message', (raw) => {
@@ -1379,6 +1588,69 @@ wssUi.on('connection', (ws) => {
           break;
         }
 
+        case 'SYNC_UI_STATE': {
+          if (msg.uiState && typeof msg.uiState === 'object') {
+            serverUiState = { ...serverUiState, ...msg.uiState };
+            saveUiStateToDisk();
+            broadcastFleetState();
+          }
+          break;
+        }
+
+        case 'START_TRANSFER': {
+          if (msg.transfer) {
+            serverActiveTransfers = [
+              msg.transfer,
+              ...serverActiveTransfers.filter((t) => t.id !== msg.transfer.id),
+            ];
+            serverUiState.transferModalOpen = true;
+            saveUiStateToDisk();
+            broadcastFleetState();
+
+            const { id, targetNode, filename } = msg.transfer;
+            const targetRelDir = filename.replace(/\/android-(cts|gts|sts)$/, '');
+            sendToBridge(targetNode, {
+              type: 'CMD_SYNC_TOOL',
+              id,
+              resource: filename,
+              target_rel_dir: targetRelDir,
+            });
+            console.log(`[Hub] Dispatched CMD_SYNC_TOOL to ${targetNode} for ${filename}`);
+          }
+          break;
+        }
+
+        case 'PAUSE_RESUME_TRANSFER': {
+          if (msg.id) {
+            serverActiveTransfers = serverActiveTransfers.map((t) =>
+              t.id === msg.id
+                ? { ...t, status: t.status === 'running' ? 'paused' : 'running' }
+                : t
+            );
+            saveUiStateToDisk();
+            broadcastFleetState();
+          }
+          break;
+        }
+
+        case 'CANCEL_TRANSFER': {
+          if (msg.id) {
+            serverActiveTransfers = serverActiveTransfers.filter((t) => t.id !== msg.id);
+            saveUiStateToDisk();
+            broadcastFleetState();
+          }
+          break;
+        }
+
+        case 'CLEAR_COMPLETED_TRANSFERS': {
+          serverActiveTransfers = serverActiveTransfers.filter(
+            (t) => t.status !== 'completed' && t.status !== 'cancelled'
+          );
+          saveUiStateToDisk();
+          broadcastFleetState();
+          break;
+        }
+
         case 'CMD_TRIGGER_PREFLIGHT': {
           const targetPcId = msg.pcId;
           if (targetPcId) {
@@ -1402,25 +1674,28 @@ wssUi.on('connection', (ws) => {
 
 // Realtime 1-second server ticker for active runs
 setInterval(() => {
+  let needsBroadcast = false;
+
   if (activeJobs.size > 0) {
     const now = Date.now();
-    let hasRunning = false;
     for (const job of activeJobs.values()) {
       if (job.status === 'Running' || job.status === 'Starting') {
         const currentElapsed = Math.max(0, Math.floor((now - (job.startedAt || now)) / 1000));
         if (job.elapsed_secs !== currentElapsed) {
           job.elapsed_secs = currentElapsed;
-          hasRunning = true;
+          needsBroadcast = true;
         }
       }
     }
-    if (hasRunning) {
-      broadcastFleetState();
-    }
+  }
+
+  if (needsBroadcast) {
+    broadcastFleetState();
   }
 }, 1000);
 
 loadWorkflowsFromDisk();
+loadUiStateFromDisk();
 initJobHistoryFromDisk();
 
 const PORT = process.env.PORT || 4000;
