@@ -246,19 +246,6 @@ const SingleWorkflowRunner: React.FC<{
           borderRadius: isParentOpen ? '10px 10px 0 0' : '10px',
         }}
       >
-        {/* Top Right Dismiss/Delete Button */}
-        <button
-          className="btn-icon-danger workflow-run-dismiss-top"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDismiss(job.run_id);
-          }}
-          title="Tutup / Dismiss Accordion Log Run ini"
-          aria-label="Dismiss Run Accordion"
-        >
-          <TrashIcon size={13} />
-        </button>
-
         {/* Main Content Area */}
         <div className="workflow-run-main">
           {/* Top Row: Chevron, Title, Status, Model, AP, Workstation */}
@@ -300,7 +287,7 @@ const SingleWorkflowRunner: React.FC<{
           )}
         </div>
 
-        {/* Right Action Area: Timer and Action (Cancel Flow) */}
+        {/* Right Action Area: Timer, Action (Cancel Run) & Dismiss Button */}
         <div className="workflow-run-actions" onClick={(e) => e.stopPropagation()}>
           <span
             className="mono-cell workflow-run-timer"
@@ -330,6 +317,14 @@ const SingleWorkflowRunner: React.FC<{
               <span>Cancel Run</span>
             </button>
           )}
+          <button
+            className="btn-icon-danger"
+            onClick={() => onDismiss(job.run_id)}
+            title="Tutup / Dismiss Accordion Log Run ini"
+            aria-label="Dismiss Run Accordion"
+          >
+            <TrashIcon size={13} />
+          </button>
         </div>
       </div>
 

@@ -825,7 +825,6 @@ body {
    ========================================================================== */
 
 .workflow-run-head {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -843,26 +842,12 @@ body {
   background-color: var(--bg-hover);
 }
 
-.workflow-run-dismiss-top {
-  position: absolute;
-  top: 0.65rem;
-  right: 0.75rem;
-  z-index: 5;
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-full);
-}
-
 .workflow-run-main {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   flex: 1;
   min-width: 0;
-  padding-right: 2.25rem;
 }
 
 .workflow-run-row-primary {
@@ -1296,6 +1281,9 @@ body {
 }
 
 .accordion-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   width: 100%;
 }
 
@@ -2600,19 +2588,11 @@ button.btn-running:disabled svg {
 
   /* Workflow Runner Head Mobile */
   .workflow-run-head {
-    position: relative !important;
     display: flex !important;
     flex-direction: column !important;
     align-items: stretch !important;
     gap: 0.55rem !important;
     padding: 0.65rem 0.75rem !important;
-  }
-
-  .workflow-run-dismiss-top {
-    position: absolute !important;
-    top: 0.55rem !important;
-    right: 0.55rem !important;
-    z-index: 5 !important;
   }
 
   .workflow-run-main {
@@ -2622,7 +2602,7 @@ button.btn-running:disabled svg {
     gap: 0.4rem !important;
     width: 100% !important;
     min-width: 0 !important;
-    padding-right: 2rem !important;
+    padding-right: 0 !important;
   }
 
   .workflow-run-row-primary {

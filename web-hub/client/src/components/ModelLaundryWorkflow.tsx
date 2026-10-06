@@ -422,19 +422,11 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                 {workflow.selectedSerials.length}/{matchingDevices.length} Unit
               </span>
             )}
-            <button
-              className="btn-icon-danger"
-              title="Hapus Laundry Workflow"
-              onClick={() => onRemoveWorkflow(workflow.id)}
-              aria-label="Remove workflow"
-            >
-              <TrashIcon size={15} />
-            </button>
           </div>
         </div>
 
-        {isLoaded && (
-          <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
+        <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
+          {isLoaded && (
             <button
               className={`btn ${isWorkflowRunning ? 'btn-running' : 'btn-suite-primary'} btn-action-full`}
               title={isWorkflowRunning ? 'Automasi sedang berlangsung' : 'Jalankan Cuci SMR untuk modul terpilih'}
@@ -444,8 +436,16 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
               <PlayIcon size={13} />
               <span>{isWorkflowRunning ? 'Sedang Berjalan...' : 'Jalankan Automasi'}</span>
             </button>
-          </div>
-        )}
+          )}
+          <button
+            className="btn-icon-danger"
+            title="Hapus Laundry Workflow"
+            onClick={() => onRemoveWorkflow(workflow.id)}
+            aria-label="Remove workflow"
+          >
+            <TrashIcon size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Root Accordion Body */}
