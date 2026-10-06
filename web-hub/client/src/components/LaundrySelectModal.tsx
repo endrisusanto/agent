@@ -26,6 +26,31 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+export function normalizeModelName(raw?: string): string {
+  if (!raw) return 'UNKNOWN';
+  let str = raw.replace(/^SM[-_]?/i, '').trim();
+  if (str.toUpperCase().startsWith('LAUNDRY')) {
+    // If it's a filename like Laundry_SMR_SM-A546E..., extract model token
+    const m = str.match(/(?:SM[-_])?([A-Z][0-9]{3}[A-Z0-9]?)/i);
+    if (m && m[1]) str = m[1].replace(/^SM[-_]?/i, '');
+  }
+  let modelPart = '';
+  for (const ch of str) {
+    if (/[a-zA-Z0-9]/.test(ch)) {
+      modelPart += ch;
+      if (modelPart.length >= 5 && /[FBGEPNUWfbgepnuw]$/.test(modelPart)) {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  if (modelPart.length >= 4 && /^[ASFMXT]/i.test(modelPart)) {
+    return modelPart.toUpperCase();
+  }
+  return str.toUpperCase();
+}
+
 export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   isOpen,
   onClose,
@@ -54,8 +79,10 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   const modelChips = useMemo(() => {
     const counts: Record<string, number> = {};
     (zips || []).forEach((z) => {
-      const m = z.model || 'UNKNOWN';
-      counts[m] = (counts[m] || 0) + 1;
+      const cleanModel = normalizeModelName(z.model || z.filename);
+      if (cleanModel !== 'UNKNOWN') {
+        counts[cleanModel] = (counts[cleanModel] || 0) + 1;
+      }
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [zips]);
@@ -64,9 +91,9 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   const isModelDeviceConnected = (modelName: string): boolean => {
     if (!devices || devices.length === 0) return false;
     if (modelName === 'ALL') return devices.length > 0;
-    const mClean = modelName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const mClean = normalizeModelName(modelName).replace(/[^A-Z0-9]/g, '');
     return devices.some((d) => {
-      const dModel = (d.model || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const dModel = normalizeModelName(d.model || '').replace(/[^A-Z0-9]/g, '');
       return dModel === mClean || dModel.includes(mClean) || mClean.includes(dModel);
     });
   };
@@ -74,7 +101,10 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   // Filtered zips based on selected model chip
   const filteredZips = useMemo(() => {
     if (selectedModelFilter === 'ALL') return zips;
-    return (zips || []).filter((z) => (z.model || 'UNKNOWN') === selectedModelFilter);
+    return (zips || []).filter((z) => {
+      const cleanModel = normalizeModelName(z.model || z.filename);
+      return cleanModel === selectedModelFilter;
+    });
   }, [zips, selectedModelFilter]);
 
   if (!isOpen) return null;
@@ -110,12 +140,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
         }}
       >
         <div className="modal-header">
-          <div>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Select Laundry ({pcId})</h3>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              Pick a previous test result from the node disk to run selective retries
-            </p>
-          </div>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Pick Zip Laundry</h3>
           <button className="btn btn-secondary" onClick={onClose} style={{ padding: '0.375rem' }}>
             <CloseIcon size={16} />
           </button>
@@ -183,7 +208,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
 
           <div className="form-group">
             <label className="form-label">
-              Available Result Zips on {pcId} ({filteredZips.length} files)
+              Daftar Paket Laundry Fleet ({filteredZips.length} file)
             </label>
             {filteredZips.length === 0 ? (
               <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', padding: '0.5rem 0' }}>
@@ -207,21 +232,39 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                     }}
                   >
                     <div style={{ minWidth: 0, flex: 1, marginRight: '0.5rem' }}>
-                      <strong
-                        style={{
-                          fontSize: '0.8125rem',
-                          display: 'block',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          maxWidth: '100%',
-                        }}
-                        title={z.filename}
-                      >
-                        {z.filename}
-                      </strong>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                        {z.pcId && z.pcId.toLowerCase() !== 'syncmaster' && z.pcId !== 'Hub-Local' && (
+                          <span
+                            style={{
+                              fontSize: '0.6875rem',
+                              padding: '0.0625rem 0.375rem',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(56, 139, 253, 0.15)',
+                              color: '#58a6ff',
+                              border: '1px solid rgba(56, 139, 253, 0.3)',
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                            title="Source Node"
+                          >
+                            {z.pcId}
+                          </span>
+                        )}
+                        <strong
+                          style={{
+                            fontSize: '0.8125rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: '100%',
+                          }}
+                          title={z.filename}
+                        >
+                          {z.filename}
+                        </strong>
+                      </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {z.model ? `Model: ${z.model} • ` : ''}{formatBytes(z.sizeBytes)} • {new Date(z.modifiedAt).toLocaleString()}
+                        {z.model ? `Model: ${z.model.replace(/^SM-/i, '').replace(/^SM/i, '')} • ` : ''}{formatBytes(z.sizeBytes)} • {new Date(z.modifiedAt).toLocaleString()}
                       </div>
                     </div>
                     {selectedZipPath === z.path && <CheckIcon size={16} />}
@@ -293,7 +336,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                         Target Model
                       </div>
                       <div className="mono-cell" style={{ fontSize: '0.8125rem', fontWeight: 600, marginTop: '0.25rem', color: 'var(--text-primary)' }}>
-                        {laundryAnalysis.rows[0]?.model || '-'}
+                        {(laundryAnalysis.rows[0]?.model || '-').replace(/^SM-/i, '').replace(/^SM/i, '')}
                       </div>
                     </div>
                     <div>
@@ -333,7 +376,8 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                         {laundryAnalysis.rows.map((r) => {
                           const isChecked = selectedRowIds.includes(r.id);
                           const isFail = (r.failed || 0) > 0 || r.status?.toUpperCase() === 'FAIL';
-                          const subInfo = [r.suite_version, r.model, r.result_dir].filter(Boolean).join(' · ');
+                          const cleanRowModel = r.model ? r.model.replace(/^SM-/i, '').replace(/^SM/i, '') : '';
+                          const subInfo = [r.suite_version, cleanRowModel, r.result_dir].filter(Boolean).join(' · ');
                           return (
                             <tr
                               key={r.id}

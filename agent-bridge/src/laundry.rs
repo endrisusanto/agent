@@ -31,7 +31,13 @@ pub fn resolve_zip_path(zip_path: &str) -> Option<PathBuf> {
     }
 
     // 3. Known directories
-    for dir in &["/home/endri-pro/Downloads/CUCIAN", "/cucian", "/tmp/CUCIAN"] {
+    for dir in &[
+        "/home/endri-pro/Downloads/CUCIAN",
+        "/home/gba/Downloads/CUCIAN",
+        "/home/gba/Downloads",
+        "/cucian",
+        "/tmp/CUCIAN",
+    ] {
         let candidate = PathBuf::from(dir).join(filename.as_ref());
         if candidate.is_file() {
             return Some(candidate);
@@ -322,27 +328,35 @@ fn detect_laundry_plan_kind(content: &str, _xml_path: &Path, original_zip_path: 
 
 fn extract_model_from_name(filename: &str) -> Option<String> {
     let base = filename.strip_suffix(".zip").unwrap_or(filename);
-    let first_token = base.split('_').next().unwrap_or(base);
+    let tokens = base.split(|c: char| c == '_' || c == '-' || c == '/' || c == ' ');
 
-    if first_token.starts_with("SM-") || first_token.starts_with("sm-") {
-        return Some(first_token.to_uppercase());
-    }
+    for raw_token in tokens {
+        let token = raw_token.strip_prefix("SM-")
+            .or_else(|| raw_token.strip_prefix("sm-"))
+            .or_else(|| raw_token.strip_prefix("SM_"))
+            .or_else(|| raw_token.strip_prefix("sm_"))
+            .unwrap_or(raw_token);
 
-    let mut model_part = String::new();
-    for ch in first_token.chars() {
-        if ch.is_ascii_alphanumeric() {
-            model_part.push(ch);
-            if model_part.len() >= 5 && (model_part.ends_with('F') || model_part.ends_with('B') || model_part.ends_with('G') || model_part.ends_with('E') || model_part.ends_with('P') || model_part.ends_with('N') || model_part.ends_with('U') || model_part.ends_with('W')) {
+        let mut model_part = String::new();
+        for ch in token.chars() {
+            if ch.is_ascii_alphanumeric() {
+                model_part.push(ch);
+                if model_part.len() >= 5 && matches!(model_part.chars().last(), Some('F' | 'B' | 'G' | 'E' | 'P' | 'N' | 'U' | 'W' | 'f' | 'b' | 'g' | 'e' | 'p' | 'n' | 'u' | 'w')) {
+                    break;
+                }
+            } else {
                 break;
             }
-        } else {
-            break;
+        }
+
+        if model_part.len() >= 4 {
+            let first_char = model_part.chars().next().unwrap().to_ascii_uppercase();
+            if matches!(first_char, 'A' | 'S' | 'F' | 'M' | 'X' | 'T') {
+                return Some(model_part.to_uppercase());
+            }
         }
     }
 
-    if !model_part.is_empty() && model_part.len() >= 4 {
-        return Some(format!("SM-{}", model_part.to_uppercase()));
-    }
     None
 }
 

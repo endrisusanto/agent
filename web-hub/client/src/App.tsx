@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useFleetWebSocket, LaundryRow } from './hooks/useFleetWebSocket';
+import { useFleetWebSocket, LaundryRow, LaundryZipItem } from './hooks/useFleetWebSocket';
 import { FleetHeader } from './components/FleetHeader';
 import { FilterToolbarCard } from './components/FilterToolbarCard';
 import { LaundryWorkflowSection } from './components/LaundryWorkflowSection';
@@ -69,9 +69,18 @@ export const App: React.FC = () => {
 
   const runningSectionRef = useRef<HTMLDivElement>(null);
 
-  // Collect all available zips across all connected bridges
+  // Collect all available zips across all connected bridges with source pcId
   const allAvailableZips = useMemo(() => {
-    return bridges.flatMap((b) => b.laundryZips || []);
+    const map = new Map<string, LaundryZipItem>();
+    bridges.forEach((b) => {
+      (b.laundryZips || []).forEach((z) => {
+        const key = `${z.filename}_${z.pcId || b.pcId}`;
+        if (!map.has(key)) {
+          map.set(key, { ...z, pcId: z.pcId || b.pcId });
+        }
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => b.modifiedAt - a.modifiedAt);
   }, [bridges]);
 
   // Manage multiple laundry workflows (unified on server + synced across all devices)
@@ -144,7 +153,7 @@ export const App: React.FC = () => {
 
   const handleOpenLaundryPicker = (workflowId: string, pcId?: string) => {
     setActiveWorkflowIdForPicker(workflowId);
-    setPickerPcId(pcId || (bridges[0]?.pcId ?? ''));
+    setPickerPcId(pcId || '');
     setIsLaundryModalOpen(true);
   };
 
@@ -212,7 +221,7 @@ export const App: React.FC = () => {
   };
 
   const activePickerBridge = bridges.find((b) => b.pcId === pickerPcId) || bridges[0];
-  const zipsForPicker = activePickerBridge?.laundryZips || allAvailableZips;
+  const zipsForPicker = allAvailableZips;
 
   const preflightIssueCount = useMemo(() => {
     return preflightReports.reduce((acc, rep) => {
@@ -326,7 +335,7 @@ export const App: React.FC = () => {
                   detectedPda = detectedPda || firstToken;
 
                   if (firstToken.startsWith('SM-') || firstToken.startsWith('sm-')) {
-                    detectedModel = firstToken.toUpperCase();
+                    detectedModel = firstToken.replace(/^SM-/i, '').toUpperCase();
                   } else {
                     let modelPart = '';
                     for (const ch of firstToken) {
@@ -340,10 +349,11 @@ export const App: React.FC = () => {
                       }
                     }
                     if (modelPart.length >= 4) {
-                      detectedModel = `SM-${modelPart.toUpperCase()}`;
+                      detectedModel = modelPart.toUpperCase();
                     }
                   }
                 }
+                detectedModel = detectedModel.replace(/^SM-/i, '');
 
                 // 2. Find online devices matching this detected model (with underscore/hyphen normalization)
                 const matchingDevs = devices.filter((d) =>

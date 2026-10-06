@@ -630,10 +630,13 @@ async fn run_bridge_worker(state: AppState) {
 
                                             "CMD_ANALYZE_LAUNDRY" => {
                                                 if let Some(zip_path) = val.get("zip_path").and_then(|s| s.as_str()) {
+                                                    let target_pc_id = val.get("targetPcId").and_then(|s| s.as_str()).unwrap_or(&pc_id);
                                                     match laundry::analyze_laundry_zip(zip_path) {
                                                         Ok(rows) => {
                                                             let reply = json!({
                                                                 "type": "LAUNDRY_ANALYSIS_RESULT",
+                                                                "targetPcId": target_pc_id,
+                                                                "pcId": target_pc_id,
                                                                 "zip_path": zip_path,
                                                                 "rows": rows
                                                             });
@@ -642,6 +645,8 @@ async fn run_bridge_worker(state: AppState) {
                                                         Err(err) => {
                                                             let reply = json!({
                                                                 "type": "LAUNDRY_ANALYSIS_RESULT",
+                                                                "targetPcId": target_pc_id,
+                                                                "pcId": target_pc_id,
                                                                 "zip_path": zip_path,
                                                                 "error": err
                                                             });

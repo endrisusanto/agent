@@ -88,9 +88,10 @@ NEXT_TAG="${PREFIX}${NEXT_VERSION}"
 echo "[Release] Current Version : $LATEST_TAG"
 echo "[Release] Next Version    : $NEXT_TAG"
 
-# Update Cargo.toml (only the first version line under [package]) and package.json
+# Update Cargo.toml (only the first version line under [package]), package.json, and tauri.conf.json
 sed -i -E "0,/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/s/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"${NEXT_VERSION}\"/" agent-bridge/Cargo.toml
 sed -i -E "0,/\"version\": \"[0-9]+\.[0-9]+\.[0-9]+\"/s/\"version\": \"[0-9]+\.[0-9]+\.[0-9]+\"/\"version\": \"${NEXT_VERSION}\"/" package.json
+sed -i -E "0,/\"version\": \"[0-9]+\.[0-9]+\.[0-9]+\"/s/\"version\": \"[0-9]+\.[0-9]+\.[0-9]+\"/\"version\": \"${NEXT_VERSION}\"/" agent-bridge/tauri.conf.json
 
 # Stage all files
 git add -A

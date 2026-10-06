@@ -175,18 +175,23 @@ export function formatDurationHms(val: number | string | undefined | null): stri
 }
 
 function extractModelFromFilename(filename: string): string | undefined {
-  const smMatch = filename.match(/\b(SM-[A-Za-z0-9]+)\b/i) || filename.match(/(SM-[A-Za-z0-9]+)/i);
-  if (smMatch && smMatch[1]) {
-    return smMatch[1].toUpperCase();
-  }
   const base = filename.replace(/\.zip$/i, '');
   const tokens = base.split(/[_/\-\s]+/);
-  for (const token of tokens) {
-    if (/^[A-Za-z0-9]{4,}$/.test(token)) {
-      const raw = token.toUpperCase();
-      if (/^[ASFMXT][0-9]{3}[A-Z0-9]*$/.test(raw)) {
-        return `SM-${raw}`;
+  for (const rawToken of tokens) {
+    const token = rawToken.replace(/^SM[-_]?/i, '');
+    let modelPart = '';
+    for (const ch of token) {
+      if (/[a-zA-Z0-9]/.test(ch)) {
+        modelPart += ch;
+        if (modelPart.length >= 5 && /[FBGEPNUWfbgepnuw]$/.test(modelPart)) {
+          break;
+        }
+      } else {
+        break;
       }
+    }
+    if (modelPart.length >= 4 && /^[ASFMXT]/i.test(modelPart)) {
+      return modelPart.toUpperCase();
     }
   }
   return undefined;
@@ -221,7 +226,7 @@ export function scanLocalCucianZips(): LaundryZipItem[] {
                   sizeBytes: stat.size,
                   modifiedAt: stat.mtimeMs,
                   model: extractModelFromFilename(file),
-                  pcId: 'syncmaster'
+                  pcId: process.env.PC_ID || 'Hub-Local'
                 });
               } catch (_) {}
             }
@@ -1194,7 +1199,7 @@ function broadcastFleetState() {
   // If no bridges are connected, supply a default server entry so UI can still browse zips
   if (bridgeList.length === 0 && localZips.length > 0) {
     bridgeList.push({
-      pcId: 'syncmaster',
+      pcId: process.env.PC_ID || 'Hub-Local',
       os: 'linux',
       ip: '127.0.0.1',
       autoRoot: '/cucian',
@@ -1406,9 +1411,10 @@ wssBridge.on('connection', (ws, req) => {
         }
 
         case 'LAUNDRY_ANALYSIS_RESULT': {
+          const targetPcId = msg.targetPcId || msg.pcId || registeredPcId;
           broadcastToUi({
             type: 'LAUNDRY_ANALYSIS_RESULT',
-            pcId: registeredPcId,
+            pcId: targetPcId,
             zip_path: msg.zip_path,
             rows: msg.rows || [],
             error: msg.error
@@ -1574,8 +1580,22 @@ wssUi.on('connection', (ws) => {
 
         case 'EXEC_ANALYZE_LAUNDRY': {
           const { pcId, zip_path } = msg;
-          if (pcId && sendToBridge(pcId, { type: 'CMD_ANALYZE_LAUNDRY', zip_path })) {
-            console.log(`[Hub] Dispatched CMD_ANALYZE_LAUNDRY to ${pcId} for ${zip_path}`);
+          const fname = path.basename(zip_path || '');
+          // ponytail: Prioritize bridge that actually hosts this zip file (Endri Ubuntu / owner bridge)
+          const ownerBridge = Array.from(bridges.values()).find((b) =>
+            (b.laundryZips || []).some((z) => z.path === zip_path || z.filename === fname)
+          );
+          const candidateNodes = [
+            ownerBridge?.pcId,
+            'Endri Ubuntu',
+            pcId,
+            ...Array.from(bridges.keys())
+          ].filter((id): id is string => Boolean(id) && bridges.has(id));
+
+          const targetNode = candidateNodes[0];
+          if (targetNode) {
+            sendToBridge(targetNode, { type: 'CMD_ANALYZE_LAUNDRY', zip_path, targetPcId: pcId });
+            console.log(`[Hub] Dispatched CMD_ANALYZE_LAUNDRY to ${targetNode} for ${zip_path} (for UI target: ${pcId})`);
           }
           break;
         }

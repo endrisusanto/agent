@@ -216,7 +216,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
               onClick={() => {
                 const pcs = Array.from(new Set(devices.map((d) => d.pcId).filter(Boolean)));
                 if (pcs.length === 0) {
-                  onResetBusy('syncmaster');
+                  onResetBusy('LOCAL');
                 } else {
                   pcs.forEach((pc) => onResetBusy(pc));
                 }
