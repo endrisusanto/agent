@@ -250,6 +250,12 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     "report-log-files/".to_string()
                 };
 
+                let parsed_fingerprint = parse_xml_string_attr(&content, "build_fingerprint")
+                    .or_else(|| parse_xml_string_attr(&content, "fingerprint"))
+                    .or_else(|| parse_xml_entry_value(&content, "ro.build.fingerprint"))
+                    .or_else(|| parse_xml_entry_value(&content, "build_fingerprint"))
+                    .unwrap_or_default();
+
                 results.push(LaundryResultInfo {
                     id: format!("{}_{}", suite, raw_dir_name),
                     suite,
@@ -265,6 +271,7 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     model: formatted_model,
                     ap_version: parsed_ap,
                     plan: detected_plan,
+                    fingerprint: parsed_fingerprint,
                 });
             }
         }

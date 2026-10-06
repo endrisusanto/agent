@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ActiveJobItem } from '../hooks/useFleetWebSocket';
 import { TrashIcon, ChevronDownIcon, ChevronUpIcon } from './Icons';
 import { formatDurationHms } from '../utils/formatters';
+import { useAlertModal } from '../context/AlertContext';
 
 interface ServerZipItem {
   filename: string;
@@ -34,6 +35,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
   const isExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
   const handleToggleExpand = onToggleExpand || (() => setInternalExpanded(!internalExpanded));
   const [serverZips, setServerZips] = useState<ServerZipItem[]>([]);
+  const { showConfirm } = useAlertModal();
 
   useEffect(() => {
     let isMounted = true;
@@ -88,9 +90,16 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
               <button
                 className="btn btn-secondary btn-xs btn-clear-history"
                 onClick={() => {
-                  if (window.confirm('Hapus semua riwayat pengujian?')) {
-                    onClearAllHistory();
-                  }
+                  showConfirm({
+                    title: 'Hapus Riwayat Pengujian',
+                    message: 'Apakah Anda yakin ingin menghapus seluruh log dan riwayat eksekusi pengujian ini?',
+                    type: 'confirm',
+                    confirmText: 'Ya, Hapus Semua',
+                    cancelText: 'Batal',
+                    onConfirm: () => {
+                      onClearAllHistory();
+                    },
+                  });
                 }}
                 style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--status-fail-text, #ef4444)' }}
                 title="Hapus semua riwayat pengujian"

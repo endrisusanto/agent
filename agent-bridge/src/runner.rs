@@ -265,63 +265,76 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
     }
 }
 
-// ponytail: Only copy SCAT files from source/laundry package since ro.xml is generated dynamically
+// ponytail: Copy raw SCAT zip file without extraction and rename to SCAT_{AP_VERSION}.zip
 pub fn preserve_scat_files(
     extracted_dir: &Path,
     source_zip: &Path,
     session_dir: &Path,
+    ap_version: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     collected_zips: &Arc<Mutex<Vec<String>>>,
 ) {
-    let mut preserved_count = 0;
+    let clean_ap = ap_version.trim();
+    let scat_dest_name = if !clean_ap.is_empty() && clean_ap != "PDA" {
+        format!("SCAT_{clean_ap}.zip")
+    } else {
+        "SCAT.zip".to_string()
+    };
 
-    let mut handle_candidate = |file_path: &Path| {
+    let mut preserved = false;
+
+    let handle_candidate = |file_path: &Path| -> bool {
         let fname = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let fname_lower = fname.to_lowercase();
 
-        if fname_lower.contains("scat") {
-            let target_path = session_dir.join(fname);
-            if !target_path.exists() {
-                if let Ok(_) = fs::copy(file_path, &target_path) {
-                    preserved_count += 1;
-                    let _ = log_tx.send(format!(
-                        "[AI Worker] Preserved SCAT to session: {}",
-                        fname
-                    ));
-                    if fname_lower.ends_with(".zip") {
-                        let mut zips = collected_zips.lock().unwrap();
-                        if !zips.contains(&fname.to_string()) {
-                            zips.push(fname.to_string());
+        if fname_lower.contains("scat") && fname_lower.ends_with(".zip") {
+            let target_path = session_dir.join(&scat_dest_name);
+            if let Ok(_) = fs::copy(file_path, &target_path) {
+                let _ = log_tx.send(format!(
+                    "[AI Worker] Preserved raw SCAT zip to session as: {}",
+                    scat_dest_name
+                ));
+                let mut zips = collected_zips.lock().unwrap();
+                if !zips.contains(&scat_dest_name) {
+                    zips.push(scat_dest_name.clone());
+                }
+                return true;
+            }
+        }
+        false
+    };
+
+    // 1. Walk extracted temp directory for raw SCAT zip
+    for entry in walkdir::WalkDir::new(extracted_dir).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if handle_candidate(entry.path()) {
+                preserved = true;
+                break;
+            }
+        }
+    }
+
+    // 2. Check parent directory of the source zip if not found inside
+    if !preserved {
+        if let Some(parent_dir) = source_zip.parent() {
+            if parent_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(parent_dir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        if entry.path().is_file() {
+                            if handle_candidate(&entry.path()) {
+                                preserved = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
-    };
-
-    // 1. Walk extracted temp directory
-    for entry in walkdir::WalkDir::new(extracted_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            handle_candidate(entry.path());
-        }
     }
 
-    // 2. Check the parent directory of the source zip file (if it's a folder like Downloads/CUCIAN/MODEL/)
-    if let Some(parent_dir) = source_zip.parent() {
-        if parent_dir.is_dir() {
-            if let Ok(entries) = fs::read_dir(parent_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    if entry.path().is_file() {
-                        handle_candidate(&entry.path());
-                    }
-                }
-            }
-        }
-    }
-
-    if preserved_count > 0 {
+    if preserved {
         let _ = log_tx.send(format!(
-            "[AI Worker] Total {preserved_count} SCAT asset(s) preserved into session."
+            "[AI Worker] Raw SCAT zip preserved into session: {scat_dest_name}"
         ));
     }
 }
@@ -1913,6 +1926,11 @@ fn extract_nested_zips(dir: &Path) -> Result<(), String> {
                 let path = entry.path().to_path_buf();
                 if let Some(ext) = path.extension() {
                     if ext.to_string_lossy().to_lowercase() == "zip" {
+                        let fname_lower = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+                        // Do not extract nested SCAT zip files! They must be preserved raw.
+                        if fname_lower.contains("scat") {
+                            continue;
+                        }
                         zip_files.push(path);
                     }
                 }
@@ -2081,6 +2099,7 @@ fn prepare_laundry_source(
     devices: &[String],
     payload: &RunSuitePayload,
     session_dir: &Path,
+    pda: &str,
     log_tx: &mpsc::UnboundedSender<String>,
     collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<LaundrySource, String> {
@@ -2109,8 +2128,8 @@ fn prepare_laundry_source(
     let _ = log_tx.send("[AI Worker] Checking and extracting any nested zip files...".to_string());
     let _ = extract_nested_zips(temp.path());
 
-    // Auto Copy & Preserve SCAT files into the session directory and collected zips
-    preserve_scat_files(temp.path(), &resolved, session_dir, log_tx, collected_zips);
+    // Auto Copy & Preserve SCAT files as raw zip into the session directory and collected zips
+    preserve_scat_files(temp.path(), &resolved, session_dir, pda, log_tx, collected_zips);
 
     let (mut cts_results, mut gts_results, mut sts_results) = scan_laundry_results(temp.path());
     let _ = log_tx.send(format!(
@@ -2173,12 +2192,14 @@ fn run_laundry_smr_flow(
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
     collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
-    let mut cts_gts_devices = payload.user_devices.clone();
-    if payload.userdebug_devices.is_empty() && cts_gts_devices.is_empty() {
-        return Err("No devices specified for Laundry SMR".to_string());
+    if payload.user_devices.is_empty() || payload.userdebug_devices.is_empty() {
+        let err = "[AI Worker][ERROR] Laundry SMR membutuhkan minimal 1 perangkat build type USER (untuk CTS/GTS) dan minimal 1 perangkat build type USERDEBUG (untuk STS).";
+        let _ = log_tx.send(err.to_string());
+        return Err(err.to_string());
     }
+    let mut cts_gts_devices = payload.user_devices.clone();
 
-    let source = prepare_laundry_source(auto_root, &cts_gts_devices, payload, session_dir, log_tx, collected_zips)?;
+    let source = prepare_laundry_source(auto_root, &cts_gts_devices, payload, session_dir, pda, log_tx, collected_zips)?;
     let has_cts_or_gts = !source.cts_results.is_empty() || !source.gts_results.is_empty();
 
     if source.sts_results.is_empty() {
@@ -2360,7 +2381,7 @@ fn run_laundry_normal_flow(
         }
     }
     let devices = if !all_devices.is_empty() { &all_devices } else { &payload.user_devices };
-    let source = prepare_laundry_source(auto_root, devices, payload, session_dir, log_tx, collected_zips)?;
+    let source = prepare_laundry_source(auto_root, devices, payload, session_dir, pda, log_tx, collected_zips)?;
 
     if is_run_cancelled(run_id) {
         return Ok(130);

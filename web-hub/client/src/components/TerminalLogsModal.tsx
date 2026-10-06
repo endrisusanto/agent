@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ActiveJobItem } from '../hooks/useFleetWebSocket';
 import { CloseIcon, StopIcon, CopyIcon, AutoScrollIcon } from './Icons';
 import { formatDurationHms } from '../utils/formatters';
+import { useAlertModal } from '../context/AlertContext';
 
 interface TerminalLogsModalProps {
   isOpen: boolean;
@@ -68,10 +69,17 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
 
   if (!isOpen) return null;
 
+  const { showAlert } = useAlertModal();
+
   const handleCopyLogs = () => {
     if (Array.isArray(activeJob?.recentLogs) && activeJob.recentLogs.length > 0) {
       navigator.clipboard.writeText(activeJob.recentLogs.join('\n'));
-      alert('Logs disalin ke clipboard.');
+      showAlert({
+        title: 'Log Berhasil Disalin',
+        message: `${activeJob.recentLogs.length} baris riwayat log berhasil disalin ke clipboard sistem.`,
+        type: 'success',
+        confirmText: 'Tutup',
+      });
     }
   };
 

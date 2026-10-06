@@ -58,6 +58,8 @@ pub struct LaundryResultInfo {
     pub ap_version: String,
     #[serde(default)]
     pub plan: String,
+    #[serde(default)]
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

@@ -81,6 +81,7 @@ export interface LaundryRow {
   model: string;
   ap_version?: string;
   plan?: string;
+  fingerprint?: string;
 }
 
 export interface LaundryWorkflowState {
@@ -93,6 +94,7 @@ export interface LaundryWorkflowState {
   pda?: string;
   ap_version?: string;
   plan?: string;
+  fingerprint?: string;
   cachedRows?: LaundryRow[];
   isExpanded?: boolean;
   isLaundryExpanded?: boolean;

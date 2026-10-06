@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { DeviceItem } from '../hooks/useFleetWebSocket';
 import { ChevronDownIcon, ChevronUpIcon, LampIcon, PlayIcon, RefreshIcon } from './Icons';
+import { useAlertModal } from '../context/AlertContext';
 
 export type TestPlanType = 'SMR' | 'SKU' | 'NORMAL' | 'STS';
 
@@ -180,9 +181,15 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
     onToggleSelect(dev.serial);
   };
 
+  const { showAlert } = useAlertModal();
+
   const handleTriggerRun = () => {
     if (selectedSerials.length === 0 || !targetExecutionModel) {
-      alert('Pilih minimal 1 perangkat standby untuk menjalankan pengujian.');
+      showAlert({
+        title: 'Perangkat Belum Dipilih',
+        message: 'Pilih minimal 1 perangkat standby yang sesuai untuk menjalankan pengujian.',
+        type: 'warning',
+      });
       return;
     }
     onDirectRunSuite(activeTestPlan, targetExecutionModel, selectedSerials);

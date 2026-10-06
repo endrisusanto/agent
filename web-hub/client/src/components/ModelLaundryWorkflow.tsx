@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { DeviceItem, LaundryRow, LaundryZipItem, ActiveJobItem } from '../hooks/useFleetWebSocket';
 import { ChevronDownIcon, ChevronUpIcon, PlayIcon, TrashIcon, SmartphoneIcon, LampIcon } from './Icons';
+import { useAlertModal } from '../context/AlertContext';
 
 export interface LaundryWorkflowState {
   id: string;
@@ -12,6 +13,7 @@ export interface LaundryWorkflowState {
   pda?: string;
   ap_version?: string;
   plan?: string;
+  fingerprint?: string;
   cachedRows?: LaundryRow[];
   isExpanded?: boolean;
   isLaundryExpanded?: boolean;
@@ -26,6 +28,44 @@ export function isModelMatch(m1?: string, m2?: string): boolean {
   const n1 = m1.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const n2 = m2.toUpperCase().replace(/[^A-Z0-9]/g, '');
   return n1 === n2 || n1.endsWith(n2) || n2.endsWith(n1);
+}
+
+export function isDeviceFingerprintMatch(
+  dev: DeviceItem,
+  zipFingerprint?: string,
+  zipAp?: string,
+  zipPda?: string
+): boolean {
+  const targetFp = (zipFingerprint || '').trim().toLowerCase();
+  const targetAp = (zipAp || zipPda || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const devFp = (dev.fingerprint || '').trim().toLowerCase();
+  const devPda = (dev.pda || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  if (targetFp && devFp) {
+    if (targetFp === devFp) return true;
+    const normTarget = targetFp.replace(/:(user|userdebug)\//g, ':any/');
+    const normDev = devFp.replace(/:(user|userdebug)\//g, ':any/');
+    if (normTarget === normDev) return true;
+    if (devFp.includes(targetFp) || targetFp.includes(devFp)) return true;
+  }
+
+  if (targetAp && devPda) {
+    if (targetAp === devPda || targetAp.includes(devPda) || devPda.includes(targetAp)) {
+      return true;
+    }
+  }
+
+  if (targetAp && devFp) {
+    if (devFp.toUpperCase().includes(targetAp)) {
+      return true;
+    }
+  }
+
+  if (!targetFp && !targetAp) {
+    return true;
+  }
+
+  return false;
 }
 
 export const formatDuration = formatDurationHms;
@@ -214,9 +254,15 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
   };
 
+  const { showAlert } = useAlertModal();
+
   const handleRunLaundryAutomation = () => {
     if (workflow.selectedSerials.length === 0) {
-      alert('Pilih minimal 1 perangkat untuk menjalankan automasi Cuci SMR.');
+      showAlert({
+        title: 'Perangkat Belum Dipilih',
+        message: 'Pilih minimal 1 perangkat yang tersedia untuk menjalankan automasi Laundry.',
+        type: 'warning',
+      });
       return;
     }
 
@@ -229,7 +275,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
     const userDevices = workflow.selectedSerials.filter((s) => {
       const dev = allDevices.find((d) => d.serial === s);
-      return dev ? !dev.is_userdebug : true;
+      return dev ? !dev.is_userdebug : false;
     });
 
     const userdebugDevices = workflow.selectedSerials.filter((s) => {
@@ -238,6 +284,52 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
 
     const detectedPlanName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
+
+    // 1. Laundry SMR Validation: Must have at least 1 USER and at least 1 USERDEBUG device
+    if (detectedPlanName === 'SMR') {
+      if (userDevices.length === 0 || userdebugDevices.length === 0) {
+        showAlert({
+          title: 'Ketentuan Perangkat SMR',
+          message: 'Laundry SMR memerlukan minimal 1 perangkat build type USER untuk CTS/GTS dan minimal 1 perangkat USERDEBUG untuk STS.',
+          details: [
+            'CTS & GTS Retry: Memerlukan perangkat build type USER',
+            'STS Retry: Memerlukan perangkat build type USERDEBUG',
+          ],
+          type: 'warning',
+        });
+        return;
+      }
+    }
+
+    // 2. Fingerprint & Build Validation: Ensure devices (especially USER devices) match the zip fingerprint/PDA
+    const targetFp = analysisRows.find((r) => r.fingerprint)?.fingerprint || workflow.fingerprint || '';
+    const targetAp = workflow.ap_version || workflow.pda || analysisRows.find((r) => r.ap_version)?.ap_version || '';
+
+    const mismatchedDevices: { serial: string; model: string; is_userdebug: boolean; pda: string }[] = [];
+    workflow.selectedSerials.forEach((s) => {
+      const dev = allDevices.find((d) => d.serial === s);
+      if (dev && !isDeviceFingerprintMatch(dev, targetFp, targetAp, workflow.pda)) {
+        mismatchedDevices.push({
+          serial: dev.serial,
+          model: dev.model,
+          is_userdebug: dev.is_userdebug,
+          pda: dev.pda || dev.fingerprint || '-',
+        });
+      }
+    });
+
+    if (mismatchedDevices.length > 0) {
+      showAlert({
+        title: 'Fingerprint Tidak Cocok',
+        message: `Versi build perangkat tidak sesuai dengan target file zip ${targetAp || targetFp || workflow.model}. Pastikan fingerprint sama.`,
+        details: mismatchedDevices.map(
+          (d) => `${d.serial} (${d.is_userdebug ? 'USERDEBUG' : 'USER'}) — Build: ${d.pda}`
+        ),
+        type: 'error',
+      });
+      return;
+    }
+
     const laundryTestType = `Laundry ${detectedPlanName}`;
     onRunSuite(targetPcId, {
       test_type: laundryTestType,
@@ -806,6 +898,9 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                       <tbody>
                         {matchingDevices.map((dev) => {
                           const isChecked = workflow.selectedSerials.includes(dev.serial);
+                          const targetFp = analysisRows.find((r) => r.fingerprint)?.fingerprint || workflow.fingerprint;
+                          const targetAp = workflow.ap_version || workflow.pda || analysisRows.find((r) => r.ap_version)?.ap_version;
+                          const isFpMatch = isLoaded ? isDeviceFingerprintMatch(dev, targetFp, targetAp, workflow.pda) : true;
                           return (
                             <tr
                               key={dev.serial}
@@ -831,8 +926,17 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                   >
                                     {dev.is_userdebug ? 'USERDEBUG' : 'USER'}
                                   </span>
+                                  {isLoaded && (
+                                    <span
+                                      className={`badge badge-xs ${isFpMatch ? 'badge-ready' : 'badge-fail'}`}
+                                      style={{ fontSize: '0.625rem', padding: '0.0625rem 0.3125rem' }}
+                                      title={isFpMatch ? 'Fingerprint & PDA cocok dengan file zip' : 'Fingerprint / PDA berbeda dengan file zip'}
+                                    >
+                                      {isFpMatch ? 'FP MATCH' : 'FP MISMATCH'}
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="device-pda-sub">{dev.pda || 'PDA: -'}</div>
+                                <div className="device-pda-sub">{dev.pda || dev.fingerprint || 'PDA: -'}</div>
                               </td>
                               <td className="mono">{dev.serial}</td>
                               <td>

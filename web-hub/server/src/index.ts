@@ -1184,15 +1184,13 @@ function broadcastFleetState() {
   const localZips = scanLocalCucianZips();
 
   const bridgeList = Array.from(bridges.values()).map(b => {
-    // If bridge reported no zips or fewer zips, enrich with local scanned zips
-    const finalZips = (b.laundryZips && b.laundryZips.length > 0) ? b.laundryZips : localZips;
     return {
       pcId: b.pcId,
       os: b.os,
       ip: b.ip,
       autoRoot: b.autoRoot,
       connectedAt: b.connectedAt,
-      laundryZips: finalZips
+      laundryZips: b.laundryZips || []
     };
   });
 

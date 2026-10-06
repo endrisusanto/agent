@@ -30,23 +30,13 @@ export function normalizeModelName(raw?: string): string {
   if (!raw) return 'UNKNOWN';
   let str = raw.replace(/^SM[-_]?/i, '').trim();
   if (str.toUpperCase().startsWith('LAUNDRY')) {
-    // If it's a filename like Laundry_SMR_SM-A546E..., extract model token
-    const m = str.match(/(?:SM[-_])?([A-Z][0-9]{3}[A-Z0-9]?)/i);
-    if (m && m[1]) str = m[1].replace(/^SM[-_]?/i, '');
+    const m = str.match(/(?:SM[-_])?([ASFMXTNZG][0-9]{3}[A-Z]?)/i);
+    if (m && m[1]) return m[1].toUpperCase();
   }
-  let modelPart = '';
-  for (const ch of str) {
-    if (/[a-zA-Z0-9]/.test(ch)) {
-      modelPart += ch;
-      if (modelPart.length >= 5 && /[FBGEPNUWfbgepnuw]$/.test(modelPart)) {
-        break;
-      }
-    } else {
-      break;
-    }
-  }
-  if (modelPart.length >= 4 && /^[ASFMXT]/i.test(modelPart)) {
-    return modelPart.toUpperCase();
+  const match = str.match(/(?:^|[^A-Z0-9])([ASFMXTNZG][0-9]{3}[A-Z]?)(?:[^A-Z0-9]|$)/i) ||
+                str.match(/([ASFMXTNZG][0-9]{3}[A-Z]?)/i);
+  if (match && match[1]) {
+    return match[1].toUpperCase();
   }
   return str.toUpperCase();
 }
@@ -233,23 +223,21 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                   >
                     <div style={{ minWidth: 0, flex: 1, marginRight: '0.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
-                        {z.pcId && z.pcId.toLowerCase() !== 'syncmaster' && z.pcId !== 'Hub-Local' && (
-                          <span
-                            style={{
-                              fontSize: '0.6875rem',
-                              padding: '0.0625rem 0.375rem',
-                              borderRadius: '4px',
-                              backgroundColor: 'rgba(56, 139, 253, 0.15)',
-                              color: '#58a6ff',
-                              border: '1px solid rgba(56, 139, 253, 0.3)',
-                              fontWeight: 600,
-                              flexShrink: 0,
-                            }}
-                            title="Source Node"
-                          >
-                            {z.pcId}
-                          </span>
-                        )}
+                        <span
+                          style={{
+                            fontSize: '0.6875rem',
+                            padding: '0.0625rem 0.375rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(56, 139, 253, 0.15)',
+                            color: '#58a6ff',
+                            border: '1px solid rgba(56, 139, 253, 0.3)',
+                            fontWeight: 600,
+                            flexShrink: 0,
+                          }}
+                          title="Source Node"
+                        >
+                          {z.pcId || pcId || 'Node'}
+                        </span>
                         <strong
                           style={{
                             fontSize: '0.8125rem',
@@ -264,7 +252,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                         </strong>
                       </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {z.model ? `Model: ${z.model.replace(/^SM-/i, '').replace(/^SM/i, '')} • ` : ''}{formatBytes(z.sizeBytes)} • {new Date(z.modifiedAt).toLocaleString()}
+                        {z.model ? `Model: ${normalizeModelName(z.model)} • ` : ''}{formatBytes(z.sizeBytes)} • {new Date(z.modifiedAt).toLocaleString()}
                       </div>
                     </div>
                     {selectedZipPath === z.path && <CheckIcon size={16} />}

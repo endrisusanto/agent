@@ -6,11 +6,11 @@ import { LaundryWorkflowSection } from './components/LaundryWorkflowSection';
 import { StandbyDevicesAccordion } from './components/StandbyDevicesAccordion';
 import { RunningWorkflowAccordion } from './components/RunningWorkflowAccordion';
 import { ResultsExplorer } from './components/ResultsExplorer';
-import { LaundrySelectModal } from './components/LaundrySelectModal';
+import { LaundrySelectModal, normalizeModelName } from './components/LaundrySelectModal';
 import { TerminalLogsModal } from './components/TerminalLogsModal';
 import { PreflightModal } from './components/PreflightModal';
 import { FloatingTransferModal, ActiveTransferItem } from './components/FloatingTransferModal';
-import { LaundryWorkflowState, isModelMatch, detectZipPlanKind } from './components/ModelLaundryWorkflow';
+import { LaundryWorkflowState, isModelMatch, isDeviceFingerprintMatch, detectZipPlanKind } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
   const {
@@ -69,14 +69,18 @@ export const App: React.FC = () => {
 
   const runningSectionRef = useRef<HTMLDivElement>(null);
 
-  // Collect all available zips across all connected bridges with source pcId
+  // Collect all available zips across all connected bridges with source pcId (strictly deduplicated by filename)
   const allAvailableZips = useMemo(() => {
     const map = new Map<string, LaundryZipItem>();
     bridges.forEach((b) => {
+      const nodePcId = b.pcId || 'Node';
       (b.laundryZips || []).forEach((z) => {
-        const key = `${z.filename}_${z.pcId || b.pcId}`;
-        if (!map.has(key)) {
-          map.set(key, { ...z, pcId: z.pcId || b.pcId });
+        if (!map.has(z.filename)) {
+          map.set(z.filename, {
+            ...z,
+            model: normalizeModelName(z.model || z.filename),
+            pcId: z.pcId || nodePcId,
+          });
         }
       });
     });
@@ -355,10 +359,23 @@ export const App: React.FC = () => {
                 }
                 detectedModel = detectedModel.replace(/^SM-/i, '');
 
-                // 2. Find online devices matching this detected model (with underscore/hyphen normalization)
-                const matchingDevs = devices.filter((d) =>
-                  detectedModel ? isModelMatch(d.model, detectedModel) : false
-                );
+                const detectedFp = rows.find((r) => r.fingerprint)?.fingerprint || '';
+
+                // 2. Find online devices matching this detected model AND matching fingerprint
+                const matchingDevs = devices.filter((d) => {
+                  if (!detectedModel || !isModelMatch(d.model, detectedModel)) return false;
+                  return isDeviceFingerprintMatch(d, detectedFp, detectedAp, detectedPda);
+                });
+
+                // For Laundry SMR, ensure we select at least 1 USER and 1 USERDEBUG if available
+                let initialSerials: string[] = [];
+                if (detectedPlan === 'SMR') {
+                  const userDevs = matchingDevs.filter((d) => !d.is_userdebug);
+                  const userdebugDevs = matchingDevs.filter((d) => d.is_userdebug);
+                  initialSerials = [...userDevs.map((d) => d.serial), ...userdebugDevs.map((d) => d.serial)];
+                } else {
+                  initialSerials = matchingDevs.map((d) => d.serial);
+                }
 
                 // Auto select all module rows and all matching devices
                 const allModuleNames = rows.map((r) => r.testcase || r.suite);
@@ -368,11 +385,12 @@ export const App: React.FC = () => {
                   model: detectedModel || '',
                   pda: detectedAp || detectedPda || (matchingDevs[0]?.pda ?? ''),
                   ap_version: detectedAp || detectedPda || (matchingDevs[0]?.pda ?? ''),
+                  fingerprint: detectedFp,
                   plan: detectedPlan,
                   selectedZip: zipPath,
                   cachedRows: rows,
                   selectedModules: allModuleNames,
-                  selectedSerials: matchingDevs.map((d) => d.serial),
+                  selectedSerials: initialSerials,
                 });
                 setIsLaundryModalOpen(false);
               }
