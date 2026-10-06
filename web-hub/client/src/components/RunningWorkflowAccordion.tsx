@@ -324,10 +324,10 @@ const SingleWorkflowRunner: React.FC<{
             <button
               className="btn btn-danger btn-xs btn-cancel-flow"
               onClick={() => onCancelJob(job.pcId, job.run_id)}
-              title="Cancel Flow"
+              title="Cancel Run"
             >
               <StopIcon size={12} />
-              <span>Cancel Flow</span>
+              <span>Cancel Run</span>
             </button>
           )}
         </div>
@@ -590,11 +590,12 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
           )}
           {dismissedRunIds.length > 0 && (
             <button
-              className="btn btn-secondary btn-xs"
+              className="btn-icon"
               onClick={() => setDismissedRunIds([])}
-              title="Tampilkan kembali semua run yang ditutup"
+              title={`Restore ${dismissedRunIds.length} closed run(s)`}
+              aria-label="Restore Closed Runs"
             >
-              Restore Closed Runs
+              <ResetIcon size={14} />
             </button>
           )}
           <span

@@ -33,6 +33,20 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   const [activeTestPlan, setActiveTestPlan] = useState<TestPlanType>('SMR');
   const [selectedModelFilter, setSelectedModelFilter] = useState<string>('ALL');
 
+  // Handle changing test plan (SMR / SKU / NORMAL / STS)
+  const handleTestPlanChange = (plan: TestPlanType) => {
+    setActiveTestPlan(plan);
+    if (plan === 'STS') {
+      // Unselect any non-userdebug devices currently selected
+      const userdebugSerials = devices
+        .filter((d) => selectedSerials.includes(d.serial) && d.is_userdebug)
+        .map((d) => d.serial);
+      if (userdebugSerials.length !== selectedSerials.length) {
+        onSelectAll(userdebugSerials);
+      }
+    }
+  };
+
   // Compute model counts for model filter pills
   const modelCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -101,14 +115,18 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
 
   // Devices that are eligible for selection in the current view
   const selectableDevices = useMemo(() => {
+    let pool = filteredDevices;
+    if (activeTestPlan === 'STS') {
+      pool = pool.filter((d) => d.is_userdebug);
+    }
     if (activeSelectedModel) {
-      return filteredDevices.filter((d) => d.model === activeSelectedModel);
+      return pool.filter((d) => d.model === activeSelectedModel);
     }
     if (selectedModelFilter !== 'ALL') {
-      return filteredDevices.filter((d) => d.model === selectedModelFilter);
+      return pool.filter((d) => d.model === selectedModelFilter);
     }
-    return filteredDevices;
-  }, [filteredDevices, activeSelectedModel, selectedModelFilter]);
+    return pool;
+  }, [filteredDevices, activeSelectedModel, selectedModelFilter, activeTestPlan]);
 
   const allFilteredSelected =
     selectableDevices.length > 0 &&
@@ -122,7 +140,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
       const targetModel = activeSelectedModel || selectableDevices[0]?.model;
       if (targetModel) {
         const matchingSerials = filteredDevices
-          .filter((d) => d.model === targetModel)
+          .filter((d) => d.model === targetModel && (activeTestPlan === 'STS' ? d.is_userdebug : true))
           .map((d) => d.serial);
         onSelectAll(matchingSerials);
       }
@@ -130,6 +148,9 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   };
 
   const handleDeviceRowClick = (dev: DeviceItem) => {
+    if (activeTestPlan === 'STS' && !dev.is_userdebug) {
+      return; // Blocked: STS requires USERDEBUG
+    }
     if (activeSelectedModel && dev.model !== activeSelectedModel) {
       return; // Blocked: different model
     }
@@ -193,7 +214,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                 key={plan}
                 type="button"
                 className={`switch-option ${activeTestPlan === plan ? 'active' : ''}`}
-                onClick={() => setActiveTestPlan(plan)}
+                onClick={() => handleTestPlanChange(plan)}
                 title={`Pilih Testplan ${plan}`}
               >
                 {plan}
@@ -220,6 +241,13 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
 
       {isExpanded && (
         <div className="accordion-body">
+          {/* Active STS Mode Lock Notice */}
+          {activeTestPlan === 'STS' && (
+            <div className="notice-banner" style={{ backgroundColor: 'rgba(234, 179, 8, 0.1)', borderColor: 'rgba(234, 179, 8, 0.3)', color: 'var(--accent-warning, #eab308)' }}>
+              ⚡ <strong>Mode STS Aktif:</strong> Hanya perangkat dengan build type <strong>USERDEBUG</strong> yang dapat dipilih untuk automasi STS.
+            </div>
+          )}
+
           {/* Active Model Lock Notice */}
           {activeSelectedModel && (
             <div className="notice-banner">
@@ -271,15 +299,23 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                 {filteredDevices.length > 0 ? (
                   filteredDevices.map((dev) => {
                     const isSelected = selectedSerials.includes(dev.serial);
-                    const isBlocked = activeSelectedModel !== null && dev.model !== activeSelectedModel;
+                    const isStsBlocked = activeTestPlan === 'STS' && !dev.is_userdebug;
+                    const isModelBlocked = activeSelectedModel !== null && dev.model !== activeSelectedModel;
+                    const isBlocked = isModelBlocked || isStsBlocked;
+
+                    const blockedReason = isStsBlocked
+                      ? 'Mode STS: Hanya perangkat USERDEBUG yang dapat dipilih'
+                      : isModelBlocked
+                      ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})`
+                      : undefined;
 
                     return (
                       <tr
                         key={dev.serial}
                         className={`standby-device-row ${isBlocked ? 'row-blocked' : ''} ${isSelected ? 'row-selected' : ''}`}
                         onClick={() => handleDeviceRowClick(dev)}
-                        style={{ cursor: isBlocked ? 'not-allowed' : 'pointer' }}
-                        title={isBlocked ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})` : undefined}
+                        style={{ cursor: isBlocked ? 'not-allowed' : 'pointer', opacity: isBlocked ? 0.55 : 1 }}
+                        title={blockedReason}
                       >
                         <td className="standby-cell-select" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -288,7 +324,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                             checked={isSelected}
                             disabled={isBlocked}
                             onChange={() => handleDeviceRowClick(dev)}
-                            title={isBlocked ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})` : undefined}
+                            title={blockedReason}
                           />
                         </td>
                         <td className="standby-cell-pcid mono font-medium">

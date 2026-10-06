@@ -194,7 +194,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
                           <a
                             href={`/api/results/download?path=${encodeURIComponent(job.zip_file)}&file=${encodeURIComponent(job.zip_file.split('/').pop() || '')}&run_id=${encodeURIComponent(job.run_id)}`}
                             download={job.zip_file.split('/').pop()}
-                            className="btn btn-secondary btn-xs"
+                            className="btn btn-secondary btn-xs history-zip-download-btn"
                             style={{
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -203,6 +203,7 @@ export const ResultsExplorer: React.FC<ResultsExplorerProps> = ({
                               color: 'var(--text-primary)',
                               fontWeight: 600,
                               maxWidth: '220px',
+                              borderRadius: 'var(--radius-full)',
                             }}
                             title={`Download ${job.zip_file.split('/').pop()}`}
                           >

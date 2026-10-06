@@ -82,20 +82,6 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
         {/* Terminal Header */}
         <div className="modal-header terminal-modal-header">
           <div className="terminal-header-left">
-            {allRuns.length > 1 && (
-              <select
-                className="filter-select terminal-run-select"
-                value={activeJob?.run_id || ''}
-                onChange={(e) => setCurrentRunId(e.target.value)}
-              >
-                {allRuns.map((r) => (
-                  <option key={r.run_id} value={r.run_id}>
-                    [{r.pcId}] {r.test_type} - {r.suite || r.run_id} ({activeJobs.some((j) => j.run_id === r.run_id) ? 'Running' : r.status})
-                  </option>
-                ))}
-              </select>
-            )}
-
             {activeJob && (
               <div className="terminal-status-wrap">
                 <span className={`badge ${isRunning ? 'badge-running' : activeJob.status === 'Finished' ? 'badge-pass' : 'badge-fail'} badge-xs`}>

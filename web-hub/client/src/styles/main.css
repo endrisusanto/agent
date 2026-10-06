@@ -1403,19 +1403,47 @@ body {
 }
 
 .badge-unit {
-  height: 28px;
-  line-height: 26px;
-  padding: 0 0.65rem;
-  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0.18rem 0.55rem;
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: 0.725rem;
+  box-sizing: border-box;
+}
+
+/* Generic Circular Icon Button */
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  box-sizing: border-box;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-fast) var(--ease-out-fast);
+  flex-shrink: 0;
+}
+
+.btn-icon:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.btn-icon-active {
+  color: var(--status-ready-text) !important;
+  background: var(--status-ready-bg) !important;
+  border-color: var(--status-ready-border) !important;
 }
 
 .btn-icon-danger {
@@ -1432,12 +1460,109 @@ body {
   align-items: center;
   justify-content: center;
   transition: all var(--duration-fast) var(--ease-out-fast);
+  flex-shrink: 0;
 }
 
 .btn-icon-danger:hover {
   color: #ffffff;
   background: rgba(248, 81, 73, 0.9);
   border-color: #f85149;
+}
+
+/* Terminal Modal Specific Styles */
+.terminal-modal-header {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.125rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  gap: 0.75rem;
+}
+
+.terminal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.terminal-run-select {
+  height: 30px;
+  font-size: 0.75rem;
+  padding: 0 1.65rem 0 0.6rem;
+  max-width: 280px;
+  font-family: var(--font-mono);
+}
+
+.terminal-single-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.terminal-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.terminal-timer {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.terminal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.terminal-info-bar {
+  padding: 0.5rem 1.125rem;
+  background-color: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.terminal-info-bar .badge {
+  height: 22px !important;
+  line-height: 20px !important;
+  padding: 0 0.55rem !important;
+  font-size: 0.72rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: var(--radius-full) !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+}
+
+.terminal-meta-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.terminal-stats-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .accordion-body {
@@ -2328,6 +2453,36 @@ button.btn-running:disabled svg {
     padding: 0.75rem 0.875rem;
   }
 
+  .terminal-modal-header {
+    padding: 0.6rem 0.75rem !important;
+    gap: 0.5rem !important;
+  }
+
+  .terminal-header-left {
+    gap: 0.4rem !important;
+  }
+
+  .terminal-run-select {
+    max-width: 100% !important;
+    height: 28px !important;
+    font-size: 0.72rem !important;
+  }
+
+  .terminal-header-actions {
+    margin-left: auto !important;
+    gap: 0.35rem !important;
+  }
+
+  .terminal-info-bar {
+    padding: 0.45rem 0.75rem !important;
+    gap: 0.45rem !important;
+  }
+
+  .terminal-meta-chips, .terminal-stats-chips {
+    width: 100% !important;
+    justify-content: flex-start !important;
+  }
+
   .modal-footer {
     display: flex;
     flex-direction: row;
@@ -2670,15 +2825,24 @@ button.btn-running:disabled svg {
     display: flex !important;
     align-items: center !important;
     min-width: 0 !important;
+    width: 100% !important;
     margin-top: 0.25rem !important;
     padding-top: 0.4rem !important;
     border-top: 1px solid var(--border-subtle) !important;
   }
 
-  .history-cell-zip a {
+  .history-cell-zip a,
+  .history-cell-zip .history-zip-download-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     max-width: 100% !important;
     width: 100% !important;
+    height: 30px !important;
+    border-radius: var(--radius-full) !important;
     font-size: 0.75rem !important;
+    padding: 0 0.85rem !important;
+    box-sizing: border-box !important;
   }
 
   .history-cell-actions {
