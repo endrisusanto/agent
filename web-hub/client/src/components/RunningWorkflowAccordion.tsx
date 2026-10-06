@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ActiveJobItem, DeviceItem } from '../hooks/useFleetWebSocket';
-import { ChevronDownIcon, ChevronUpIcon, StopIcon, TrashIcon } from './Icons';
+import { ChevronDownIcon, ChevronUpIcon, StopIcon, TrashIcon, ResetIcon } from './Icons';
 import { formatDurationHms } from '../utils/formatters';
 
 interface RunningWorkflowAccordionProps {
@@ -246,24 +246,37 @@ const SingleWorkflowRunner: React.FC<{
           borderRadius: isParentOpen ? '10px 10px 0 0' : '10px',
         }}
       >
+        {/* Top Right Dismiss/Delete Button */}
+        <button
+          className="btn-icon-danger workflow-run-dismiss-top"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss(job.run_id);
+          }}
+          title="Tutup / Dismiss Accordion Log Run ini"
+          aria-label="Dismiss Run Accordion"
+        >
+          <TrashIcon size={13} />
+        </button>
+
         {/* Main Content Area */}
         <div className="workflow-run-main">
-          {/* Top Row: Chevron, Status, Title, Model, AP, Workstation */}
+          {/* Top Row: Chevron, Title, Status, Model, AP, Workstation */}
           <div className="workflow-run-row-primary">
             <div className="workflow-run-title-group">
               <span className="workflow-run-chevron" style={{ color: 'var(--text-muted)' }}>
                 {isParentOpen ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
-              </span>
-              <span className={`badge ${statusBadgeClass}`} style={{ fontWeight: 700, fontSize: '0.725rem' }}>
-                {isRunning ? 'RUNNING' : isCancelled ? 'CANCELLED' : 'FINISHED'}
               </span>
               <strong className="workflow-run-title">
                 WORKFLOW: {(job.test_type || job.suite || '').replace(/^Laundry\s+/i, '')}
               </strong>
             </div>
 
-            {/* Model & Firmware Badges */}
+            {/* Status, Model & Firmware Badges, PC ID */}
             <div className="workflow-run-meta-badges">
+              <span className={`badge ${statusBadgeClass}`} style={{ fontWeight: 700, fontSize: '0.725rem' }}>
+                {isRunning ? 'RUNNING' : isCancelled ? 'CANCELLED' : 'FINISHED'}
+              </span>
               {targetModel && <span className="badge badge-pc">{targetModel}</span>}
               {apVersion && apVersion !== '-' && <span className="badge badge-pc mono-cell">{apVersion}</span>}
               {job.pcId && <span className="badge badge-pc">{job.pcId}</span>}
@@ -287,7 +300,7 @@ const SingleWorkflowRunner: React.FC<{
           )}
         </div>
 
-        {/* Right Action Area: Timer, Action (Cancel Flow), and Delete/Dismiss Button */}
+        {/* Right Action Area: Timer and Action (Cancel Flow) */}
         <div className="workflow-run-actions" onClick={(e) => e.stopPropagation()}>
           <span
             className="mono-cell workflow-run-timer"
@@ -317,15 +330,6 @@ const SingleWorkflowRunner: React.FC<{
               <span>Cancel Flow</span>
             </button>
           )}
-          <button
-            className="btn-icon-danger"
-            onClick={() => onDismiss(job.run_id)}
-            title="Tutup / Dismiss Accordion Log Run ini"
-            aria-label="Dismiss Run Accordion"
-            style={{ width: '28px', height: '28px', borderRadius: 'var(--radius-full)' }}
-          >
-            <TrashIcon size={13} />
-          </button>
         </div>
       </div>
 
@@ -341,7 +345,7 @@ const SingleWorkflowRunner: React.FC<{
             >
               <div className="running-log-head-title">
                 <span>Summary</span>
-                <span className="badge badge-pc badge-xs">{aiWorkerLogs.length}</span>
+                <span className="badge badge-pc badge-count-pill">{aiWorkerLogs.length}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                 <button
@@ -350,7 +354,7 @@ const SingleWorkflowRunner: React.FC<{
                   title="Clear log"
                   aria-label="Clear log"
                 >
-                  <TrashIcon size={12} />
+                  <ResetIcon size={13} />
                 </button>
               </div>
             </div>
@@ -372,7 +376,7 @@ const SingleWorkflowRunner: React.FC<{
               >
                 <div className="running-log-head-title">
                   <span>STS</span>
-                  <span className="badge badge-unit badge-xs">{stsLogs.length}</span>
+                  <span className="badge badge-unit badge-count-pill">{stsLogs.length}</span>
                   {stsStatus && (
                     <span className={`badge ${stsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {stsStatus.text}
@@ -386,7 +390,7 @@ const SingleWorkflowRunner: React.FC<{
                     title="Clear log"
                     aria-label="Clear log"
                   >
-                    <TrashIcon size={12} />
+                    <ResetIcon size={13} />
                   </button>
                 </div>
               </div>
@@ -406,7 +410,7 @@ const SingleWorkflowRunner: React.FC<{
               >
                 <div className="running-log-head-title">
                   <span>CTS</span>
-                  <span className="badge badge-unit badge-xs">{ctsLogs.length}</span>
+                  <span className="badge badge-unit badge-count-pill">{ctsLogs.length}</span>
                   {ctsStatus && (
                     <span className={`badge ${ctsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {ctsStatus.text}
@@ -420,7 +424,7 @@ const SingleWorkflowRunner: React.FC<{
                     title="Clear log"
                     aria-label="Clear log"
                   >
-                    <TrashIcon size={12} />
+                    <ResetIcon size={13} />
                   </button>
                 </div>
               </div>
@@ -440,7 +444,7 @@ const SingleWorkflowRunner: React.FC<{
               >
                 <div className="running-log-head-title">
                   <span>GTS</span>
-                  <span className="badge badge-unit badge-xs">{gtsLogs.length}</span>
+                  <span className="badge badge-unit badge-count-pill">{gtsLogs.length}</span>
                   {gtsStatus && (
                     <span className={`badge ${gtsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {gtsStatus.text}
@@ -454,7 +458,7 @@ const SingleWorkflowRunner: React.FC<{
                     title="Clear log"
                     aria-label="Clear log"
                   >
-                    <TrashIcon size={12} />
+                    <ResetIcon size={13} />
                   </button>
                 </div>
               </div>

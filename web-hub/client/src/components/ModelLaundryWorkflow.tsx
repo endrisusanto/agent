@@ -239,6 +239,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       retry_count: 5,
       timeout_secs: 86400,
     });
+
+    setIsExpanded(false);
   };
 
   const planName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
@@ -459,7 +461,24 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                 {isLaundryExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
                 <span>HASIL PENGUJIAN</span>
               </div>
-              <div onClick={(e) => e.stopPropagation()}>
+              <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                {workflow.selectedZip && analysisRows.length > 0 && (
+                  <button
+                    className="btn btn-secondary btn-xs"
+                    disabled={isWorkflowRunning}
+                    onClick={() => {
+                      const allNames = analysisRows.map((r) => r.testcase || r.suite);
+                      const allSelected = allNames.every((n) => workflow.selectedModules.includes(n));
+                      onUpdateWorkflow({
+                        ...workflow,
+                        selectedModules: allSelected ? [] : allNames,
+                      });
+                    }}
+                    title={isWorkflowRunning ? 'Readonly saat automasi sedang berjalan' : undefined}
+                  >
+                    {analysisRows.length > 0 && analysisRows.every((r) => workflow.selectedModules.includes(r.testcase || r.suite)) ? 'Uncheck' : 'Check'}
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary btn-xs"
                   disabled={isWorkflowRunning}
@@ -490,23 +509,6 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                           <span className="badge badge-ready badge-xs">
                             {workflow.selectedModules.length} Terpilih
                           </span>
-                        </div>
-                        <div className="laundry-actions-group">
-                          <button
-                            className="btn btn-secondary btn-xs"
-                            disabled={isWorkflowRunning}
-                            onClick={() => {
-                              const allNames = analysisRows.map((r) => r.testcase || r.suite);
-                              const allSelected = allNames.every((n) => workflow.selectedModules.includes(n));
-                              onUpdateWorkflow({
-                                ...workflow,
-                                selectedModules: allSelected ? [] : allNames,
-                              });
-                            }}
-                            title={isWorkflowRunning ? 'Readonly saat automasi sedang berjalan' : undefined}
-                          >
-                            {analysisRows.length > 0 && analysisRows.every((r) => workflow.selectedModules.includes(r.testcase || r.suite)) ? 'Uncheck' : 'Check'}
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -855,7 +857,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                 {isResultsExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
                 <span>RESULTS ({readyDownloadZips.length} ZIP)</span>
               </div>
-              <div className="laundry-stats-chips" onClick={(e) => e.stopPropagation()}>
+              <div className="sub-accordion-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0, marginLeft: 'auto' }} onClick={(e) => e.stopPropagation()}>
                 {readyDownloadZips.length > 0 && (
                   <span className="badge badge-ready badge-xs">
                     📦 Siap Unduh

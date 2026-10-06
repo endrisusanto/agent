@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ActiveJobItem } from '../hooks/useFleetWebSocket';
-import { CloseIcon, StopIcon, TerminalIcon, RefreshIcon } from './Icons';
+import { CloseIcon, StopIcon, CopyIcon, AutoScrollIcon } from './Icons';
 import { formatDurationHms } from '../utils/formatters';
 
 interface TerminalLogsModalProps {
@@ -68,6 +68,10 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
     }
   };
 
+  const devicesText = Array.isArray(activeJob?.devices)
+    ? activeJob.devices.join(', ')
+    : (activeJob?.devices || '');
+
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
       <div
@@ -76,17 +80,11 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Terminal Header */}
-        <div className="modal-header" style={{ padding: '0.875rem 1.25rem', borderBottom: '1px solid var(--border-subtle)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700, fontSize: '1rem' }}>
-              <TerminalIcon size={18} />
-              <span>Live Terminal Runs</span>
-            </div>
-
+        <div className="modal-header terminal-modal-header">
+          <div className="terminal-header-left">
             {allRuns.length > 1 && (
               <select
-                className="filter-select"
-                style={{ height: '32px', fontSize: '0.75rem', padding: '0 1.75rem 0 0.6rem' }}
+                className="filter-select terminal-run-select"
                 value={activeJob?.run_id || ''}
                 onChange={(e) => setCurrentRunId(e.target.value)}
               >
@@ -99,75 +97,84 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
             )}
 
             {activeJob && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <div className="terminal-status-wrap">
                 <span className={`badge ${isRunning ? 'badge-running' : activeJob.status === 'Finished' ? 'badge-pass' : 'badge-fail'} badge-xs`}>
                   {isRunning ? 'RUNNING' : activeJob.status.toUpperCase()}
                 </span>
-                <span className="mono-cell" style={{ fontSize: '0.75rem' }}>
+                <span className="mono-cell terminal-timer">
                   ⏱ {formatDurationHms(activeElapsed)}
                 </span>
               </div>
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div className="terminal-header-actions">
             {activeJob && isRunning && (
               <button
-                className="btn btn-danger btn-xs"
+                className="btn-icon-danger"
                 onClick={() => onCancelJob(activeJob.pcId, activeJob.run_id)}
                 title="Batalkan Eksekusi Suite"
+                aria-label="Cancel Run"
               >
-                <StopIcon size={12} />
-                <span>Cancel Run</span>
+                <StopIcon size={13} />
               </button>
             )}
 
             <button
-              className="btn btn-secondary btn-xs"
+              className="btn-icon"
               onClick={handleCopyLogs}
               title="Copy All Logs"
+              aria-label="Copy Logs"
             >
-              Copy Logs
+              <CopyIcon size={14} />
             </button>
 
             <button
-              className="btn btn-secondary btn-xs"
+              className={`btn-icon ${autoScroll ? 'btn-icon-active' : ''}`}
               onClick={() => setAutoScroll(!autoScroll)}
-              style={{ color: autoScroll ? 'var(--status-ready-text)' : 'var(--text-muted)' }}
-              title="Toggle Auto-Scroll"
+              title={autoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF'}
+              aria-label="Toggle Auto Scroll"
             >
-              {autoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF'}
+              <AutoScrollIcon size={14} />
             </button>
 
-            <button className="btn btn-secondary" onClick={onClose} style={{ padding: '0.3rem' }} title="Tutup">
-              <CloseIcon size={16} />
+            <button
+              className="btn-icon terminal-close-btn"
+              onClick={onClose}
+              title="Tutup"
+              aria-label="Close"
+            >
+              <CloseIcon size={15} />
             </button>
           </div>
         </div>
 
         {/* Terminal Info Bar */}
         {activeJob && (
-          <div
-            style={{
-              padding: '0.5rem 1.25rem',
-              backgroundColor: 'var(--bg-subtle)',
-              borderBottom: '1px solid var(--border-subtle)',
-              fontSize: '0.75rem',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '0.5rem',
-            }}
-          >
-            <div>
-              <strong>Node PC:</strong> <span className="mono">{activeJob.pcId}</span> • <strong>Suite:</strong> {activeJob.test_type} ({activeJob.suite}) • <strong>Devices:</strong> <span className="mono">{Array.isArray(activeJob.devices) ? activeJob.devices.join(', ') : (activeJob.devices || 'Auto')}</span>
+          <div className="terminal-info-bar">
+            <div className="terminal-meta-chips">
+              {activeJob.pcId && (
+                <span className="badge badge-pc" title="PC Node">{activeJob.pcId}</span>
+              )}
+              {activeJob.test_type && (
+                <span className="badge badge-unit" title="Suite">{activeJob.test_type}</span>
+              )}
+              {devicesText && (
+                <span className="badge badge-pc mono-cell" title="Devices">{devicesText}</span>
+              )}
             </div>
+
             {activeJob.summary && (
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <span>Total: <strong>{activeJob.summary.total}</strong></span>
-                <span style={{ color: 'var(--status-ready-text)' }}>Passed: <strong>{activeJob.summary.passed}</strong></span>
-                <span style={{ color: activeJob.summary.failed > 0 ? 'var(--status-fail-text)' : 'inherit' }}>Failed: <strong>{activeJob.summary.failed}</strong></span>
+              <div className="terminal-stats-chips">
+                <span className="badge badge-neutral mono-cell">
+                  TOTAL: <strong>{activeJob.summary.total}</strong>
+                </span>
+                <span className="badge badge-pass mono-cell">
+                  PASS: <strong>{activeJob.summary.passed}</strong>
+                </span>
+                <span className={`badge ${activeJob.summary.failed > 0 ? 'badge-fail' : 'badge-fail-zero'} mono-cell`}>
+                  FAIL: <strong>{activeJob.summary.failed}</strong>
+                </span>
               </div>
             )}
           </div>

@@ -24,7 +24,7 @@ export const FleetHeader: React.FC<FleetHeaderProps> = ({
             <img src="/logo.png" alt="GBA Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
           </div>
           <div>
-            <h1 className="brand-title">GBA Agentic Fleet Hub</h1>
+            <h1 className="brand-title">GBA Agentic Hub</h1>
             <p className="brand-subtitle">Distributed Android Test Suite Automation</p>
           </div>
         </div>

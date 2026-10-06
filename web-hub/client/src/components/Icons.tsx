@@ -18,6 +18,13 @@ export const RefreshIcon: React.FC<{ size?: number; className?: string }> = ({ s
   </svg>
 );
 
+export const ResetIcon: React.FC<{ size?: number; className?: string }> = ({ size = 14, className }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+  </svg>
+);
+
 export const SmartphoneIcon: React.FC<{ size?: number; className?: string }> = ({ size = 16, className }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
@@ -144,5 +151,20 @@ export const TerminalIcon: React.FC<{ size?: number; className?: string }> = ({ 
     <line x1="12" y1="19" x2="20" y2="19" />
   </svg>
 );
+
+export const CopyIcon: React.FC<{ size?: number; className?: string }> = ({ size = 16, className }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
+export const AutoScrollIcon: React.FC<{ size?: number; className?: string }> = ({ size = 16, className }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="7 13 12 18 17 13" />
+    <polyline points="7 6 12 11 17 6" />
+  </svg>
+);
+
 
 

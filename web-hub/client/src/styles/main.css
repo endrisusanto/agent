@@ -414,6 +414,22 @@ body {
   color: #ffffff;
 }
 
+[data-theme='light'] .btn-success {
+  background-color: #dafbe1;
+  color: #1a7f37 !important;
+  border-color: #4ac26b;
+  font-weight: 700;
+}
+
+[data-theme='light'] .btn-success:hover:not(:disabled) {
+  background-color: #1f883d;
+  color: #ffffff !important;
+}
+
+[data-theme='light'] .btn-success span {
+  color: inherit !important;
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -517,6 +533,24 @@ body {
   line-height: 1;
 }
 
+/* Uniform Compact Badge Count Pill */
+.badge-count-pill {
+  min-width: 16px !important;
+  height: 16px !important;
+  padding: 0 4px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: var(--radius-full) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.625rem !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
+  text-align: center !important;
+  border-width: 1px !important;
+}
+
 .mobile-metric-label {
   display: none;
 }
@@ -588,8 +622,54 @@ body {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
+[data-theme='light'] .badge-chip-fixed {
+  border-color: #d0d7de;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-neutral {
+  background-color: #f6f8fa;
+  color: #1f2328;
+  border-color: #d0d7de;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-ready {
+  background-color: #dafbe1;
+  color: #1a7f37;
+  border-color: #4ac26b;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-fail {
+  background-color: #ffebe9;
+  color: #cf222e;
+  border-color: #ff8182;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-fail-zero {
+  background-color: #f6f8fa;
+  color: #57606a;
+  border-color: #d0d7de;
+}
+
 [data-theme='light'] .badge-chip-fixed .chip-circle-val {
-  background-color: rgba(0, 0, 0, 0.12);
+  background-color: rgba(0, 0, 0, 0.08);
+  color: #1f2328;
+  font-weight: 700;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-ready .chip-circle-val {
+  background-color: rgba(26, 127, 55, 0.16);
+  color: #1a7f37;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-fail .chip-circle-val {
+  background-color: rgba(207, 34, 46, 0.16);
+  color: #cf222e;
+}
+
+[data-theme='light'] .badge-chip-fixed.badge-neutral .chip-circle-val,
+[data-theme='light'] .badge-chip-fixed.badge-fail-zero .chip-circle-val {
+  background-color: rgba(0, 0, 0, 0.08);
+  color: #24292f;
 }
 
 /* Fixed Width Status Badges (Finish, Test Done, Running, Standby, Busy, etc.) */
@@ -745,6 +825,7 @@ body {
    ========================================================================== */
 
 .workflow-run-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -762,12 +843,26 @@ body {
   background-color: var(--bg-hover);
 }
 
+.workflow-run-dismiss-top {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.75rem;
+  z-index: 5;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+}
+
 .workflow-run-main {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   flex: 1;
   min-width: 0;
+  padding-right: 2.25rem;
 }
 
 .workflow-run-row-primary {
@@ -1719,7 +1814,9 @@ body {
 }
 
 /* Running State Button: Colored outline, no solid fill, animated infinite progress underline */
-.btn-running {
+.btn-running,
+.btn-running:disabled,
+button.btn-running:disabled {
   position: relative;
   overflow: hidden;
   height: 28px;
@@ -1730,14 +1827,27 @@ body {
   border-radius: var(--radius-sm);
   background-color: transparent !important;
   color: var(--accent-primary, #38bdf8) !important;
-  border: 1px solid rgba(56, 189, 248, 0.45) !important;
+  border: 1.5px solid rgba(56, 189, 248, 0.75) !important;
+  opacity: 1 !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
   cursor: not-allowed;
   box-sizing: border-box;
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.2);
+}
+
+.btn-running span,
+.btn-running svg,
+.btn-running:disabled span,
+.btn-running:disabled svg,
+button.btn-running:disabled span,
+button.btn-running:disabled svg {
+  opacity: 1 !important;
+  color: var(--accent-primary, #38bdf8) !important;
+  font-weight: 700 !important;
+  text-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
 }
 
 .btn-running::after {
@@ -1746,7 +1856,7 @@ body {
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 2.5px;
+  height: 3px;
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -1768,11 +1878,25 @@ body {
   }
 }
 
-[data-theme='light'] .btn-running {
+[data-theme='light'] .btn-running,
+[data-theme='light'] .btn-running:disabled,
+[data-theme='light'] button.btn-running:disabled {
   background-color: transparent !important;
   color: #0284c7 !important;
-  border-color: rgba(2, 132, 199, 0.45) !important;
-  box-shadow: 0 0 10px rgba(2, 132, 199, 0.1);
+  border-color: #0284c7 !important;
+  opacity: 1 !important;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.15);
+}
+
+[data-theme='light'] .btn-running span,
+[data-theme='light'] .btn-running svg,
+[data-theme='light'] .btn-running:disabled span,
+[data-theme='light'] .btn-running:disabled svg,
+[data-theme='light'] button.btn-running:disabled span,
+[data-theme='light'] button.btn-running:disabled svg {
+  opacity: 1 !important;
+  color: #0284c7 !important;
+  text-shadow: none;
 }
 
 [data-theme='light'] .btn-running::after {
@@ -2321,11 +2445,19 @@ body {
 
   /* Workflow Runner Head Mobile */
   .workflow-run-head {
+    position: relative !important;
     display: flex !important;
     flex-direction: column !important;
     align-items: stretch !important;
     gap: 0.55rem !important;
     padding: 0.65rem 0.75rem !important;
+  }
+
+  .workflow-run-dismiss-top {
+    position: absolute !important;
+    top: 0.55rem !important;
+    right: 0.55rem !important;
+    z-index: 5 !important;
   }
 
   .workflow-run-main {
@@ -2335,6 +2467,7 @@ body {
     gap: 0.4rem !important;
     width: 100% !important;
     min-width: 0 !important;
+    padding-right: 2rem !important;
   }
 
   .workflow-run-row-primary {
@@ -2423,13 +2556,12 @@ body {
 
   .history-row {
     display: grid !important;
-    grid-template-columns: 1fr 1fr 1fr auto !important;
+    grid-template-columns: auto 1fr auto !important;
     grid-template-areas:
-      "mode mode mode status"
-      "node node time time"
-      "devices devices devices devices"
-      "pass fail total total"
-      "zip zip zip delete" !important;
+      "mode mode status"
+      "node devices time"
+      "pass fail total"
+      "zip zip delete" !important;
     gap: 0.45rem 0.5rem !important;
     align-items: center !important;
     background-color: var(--bg-surface) !important;
@@ -2462,8 +2594,27 @@ body {
 
   .history-cell-node {
     grid-area: node !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    flex-shrink: 0 !important;
+  }
+
+  .history-cell-devices {
+    grid-area: devices !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .history-cell-devices .history-devices-wrap {
     display: flex !important;
     align-items: center !important;
+    gap: 0.35rem !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+    max-width: 100% !important;
   }
 
   .history-cell-time {
@@ -2474,17 +2625,8 @@ body {
     font-size: 0.725rem !important;
     color: var(--text-secondary) !important;
     font-family: var(--font-mono) !important;
-  }
-
-  .history-cell-devices {
-    grid-area: devices !important;
-    display: flex !important;
-    align-items: center !important;
-    min-width: 0 !important;
-  }
-
-  .history-cell-devices .history-devices-wrap {
-    max-width: 100% !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
   }
 
   .history-cell-passed {
@@ -2741,22 +2883,38 @@ body {
 }
 
 .log-clear-btn {
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  background: #161b22;
-  color: #58a6ff;
-  font-size: 0.6875rem;
-  font-weight: 700;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-out-fast);
 }
 
 .log-clear-btn:hover {
-  background: #21262d;
-  border-color: #58a6ff;
+  background-color: var(--bg-hover);
+  color: var(--accent-primary);
+  border-color: var(--border-strong);
+  transform: rotate(-45deg);
+}
+
+[data-theme='light'] .log-clear-btn {
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+[data-theme='light'] .log-clear-btn:hover {
+  background-color: var(--bg-subtle);
+  color: var(--accent-primary);
+  border-color: var(--border-strong);
 }
 
 /* Blur-Free Snappy Spring Animations */
