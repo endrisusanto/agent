@@ -15,6 +15,8 @@ export interface LaundryWorkflowState {
   cachedRows?: LaundryRow[];
 }
 
+import { formatDurationHms } from '../utils/formatters';
+
 export function isModelMatch(m1?: string, m2?: string): boolean {
   if (!m1 || !m2) return false;
   const n1 = m1.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -22,12 +24,7 @@ export function isModelMatch(m1?: string, m2?: string): boolean {
   return n1 === n2 || n1.endsWith(n2) || n2.endsWith(n1);
 }
 
-export function formatDuration(secs: number): string {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-}
+export const formatDuration = formatDurationHms;
 
 export function detectZipPlanKind(rows?: LaundryRow[], zipPath?: string, existingPlan?: string): 'SKU' | 'SMR' | 'Normal' {
   const rowList = Array.isArray(rows) ? rows : [];
@@ -88,6 +85,14 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   const [isDevicesExpanded, setIsDevicesExpanded] = useState(true);
   const [isResultsExpanded, setIsResultsExpanded] = useState(true);
 
+  const [, setLiveTick] = useState(0);
+  useEffect(() => {
+    const hasRunning = activeJobs.some((j) => j.status === 'Running' || j.status === 'Starting');
+    if (!hasRunning) return;
+    const interval = setInterval(() => setLiveTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [activeJobs]);
+
   // Auto-cache parsed analysis rows into workflow so they are permanently preserved across test runs
   useEffect(() => {
     if (
@@ -144,6 +149,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
   }, [activeJobs, matchingDevices, workflow.model]);
 
+  const isWorkflowRunning = Boolean(activeJob);
+
   // Latest finished test run job specifically for this workflow
   const latestFinishedJob = useMemo(() => {
     const serialSet = new Set(matchingDevices.map((d) => d.serial));
@@ -179,15 +186,6 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       ? workflow.selectedModules.filter((m) => m !== moduleName)
       : [...workflow.selectedModules, moduleName];
     onUpdateWorkflow({ ...workflow, selectedModules: updated });
-  };
-
-  const handleSelectAllFailedModules = () => {
-    const allFailedNames = failedRows.map((r) => r.testcase || r.suite);
-    const allSelected = allFailedNames.every((name) => workflow.selectedModules.includes(name));
-    onUpdateWorkflow({
-      ...workflow,
-      selectedModules: allSelected ? [] : allFailedNames,
-    });
   };
 
   const handleToggleDevice = (serial: string) => {
@@ -232,7 +230,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
     const detectedPlanName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
     onRunSuite(targetPcId, {
-      test_type: `Laundry ${detectedPlanName}`,
+      test_type: detectedPlanName,
       laundry_zip_path: workflow.selectedZip,
       selected_laundry_results: workflow.selectedModules,
       selected_laundry_rows: selectedRowsData,
@@ -247,8 +245,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   const apVersion = workflow.ap_version || workflow.pda || (matchingDevices[0]?.pda ?? '');
   const isLoaded = Boolean(workflow.selectedZip || workflow.model || workflow.ap_version);
   const titleText = isLoaded
-    ? `Laundry ${planName} ${apVersion || workflow.model}`.trim()
-    : 'LAUNDRY WORKFLOW (Pilih Zip Hasil Test)';
+    ? `Laundry ${planName}`
+    : 'Pilih Zip Test';
   const hasUserdebug = matchingDevices.some((d) => d.is_userdebug);
 
   // Fetch and list available result ZIPs from server
@@ -258,7 +256,15 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     sizeBytes: number;
     modifiedAt: number;
     model?: string;
-    run_dir?: string;
+    plan?: string;
+    suite?: string;
+    test_type?: string;
+    devsCount?: number;
+    run_batch?: string;
+    subFilesCount?: number;
+    isIndividualSuite?: boolean;
+    isMasterBatch?: boolean;
+    summary?: { total: number; passed: number; failed: number; run_time?: string; completed_time?: string };
   }>>([]);
 
   useEffect(() => {
@@ -276,9 +282,27 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     };
   }, [workflowResults.length, isResultsExpanded]);
 
-  // Filter ready-to-download ZIPs strictly for this workflow's model (Overall Run Master ZIPs)
+  // Find the latest session run batch for this model
+  const latestBatchName = useMemo(() => {
+    if (!workflow.model) return undefined;
+    const activeOrLatest = activeJob || latestFinishedJob;
+    if (activeOrLatest?.run_id) {
+      const match = serverResultZips.find(
+        (z) => z.run_batch && (activeOrLatest.run_id.includes(z.run_batch) || z.run_batch.includes(activeOrLatest.run_id))
+      );
+      if (match?.run_batch) return match.run_batch;
+    }
+
+    const modelBatches = serverResultZips
+      .filter((z) => isModelMatch(z.model, workflow.model) && z.run_batch)
+      .map((z) => ({ batch: z.run_batch!, modifiedAt: z.modifiedAt || 0 }));
+    modelBatches.sort((a, b) => b.modifiedAt - a.modifiedAt);
+    return modelBatches[0]?.batch;
+  }, [workflow.model, activeJob, latestFinishedJob, serverResultZips]);
+
+  // Filter ready-to-download ZIPs strictly for this workflow's model (Latest session run only)
   const readyDownloadZips = useMemo(() => {
-    if (!workflow.model) {
+    if (!workflow.model || !latestBatchName) {
       return [];
     }
 
@@ -287,18 +311,20 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       path?: string;
       sizeBytes?: number;
       modifiedAt?: number;
-      test_type?: string;
+      plan?: string;
       suite?: string;
+      test_type?: string;
       status?: string;
       run_id?: string;
-      summary?: { total: number; passed: number; failed: number };
+      isIndividualSuite?: boolean;
+      summary?: { total: number; passed: number; failed: number; run_time?: string; completed_time?: string };
     }> = [];
 
     const seenFilenames = new Set<string>();
 
-    // 1. Prioritize Server-scanned Consolidated Run Batch ZIPs strictly matching this model
+    // 1. Get individual suite retry ZIPs strictly from the latest session run
     for (const sZip of serverResultZips) {
-      if (!seenFilenames.has(sZip.filename)) {
+      if (sZip.isIndividualSuite && sZip.run_batch === latestBatchName && !seenFilenames.has(sZip.filename)) {
         if (sZip.model && isModelMatch(sZip.model, workflow.model)) {
           seenFilenames.add(sZip.filename);
           list.push({
@@ -306,23 +332,30 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
             path: sZip.path,
             sizeBytes: sZip.sizeBytes,
             modifiedAt: sZip.modifiedAt,
-            test_type: sZip.filename.includes('STS') ? 'STS' : sZip.filename.includes('GTS') ? 'GTS' : sZip.filename.includes('Normal') ? 'Normal' : sZip.filename.includes('SKU') ? 'SKU' : 'SMR',
-            suite: sZip.filename.includes('SMR') ? 'SMR' : sZip.filename.includes('SKU') ? 'SKU' : 'Tradefed',
+            plan: sZip.plan || 'SMR',
+            suite: sZip.suite || (sZip.filename.includes('CTS') ? 'CTS' : sZip.filename.includes('GTS') ? 'GTS' : 'STS'),
+            test_type: `${sZip.plan || 'SMR'} / ${sZip.suite || (sZip.filename.includes('CTS') ? 'CTS' : sZip.filename.includes('GTS') ? 'GTS' : 'STS')}`,
             status: 'Finished',
+            run_id: latestBatchName,
+            isIndividualSuite: true,
+            summary: sZip.summary,
           });
         }
       }
     }
 
-    // 2. Active & Finished jobs strictly matching this model
+    // 2. Active & Finished jobs individual suite ZIPs belonging to this session
     for (const job of workflowResults) {
+      if (job.run_id && !latestBatchName.includes(job.run_id) && !job.run_id.includes(latestBatchName)) {
+        continue;
+      }
       const zips = Array.isArray(job.zip_files) ? [...job.zip_files] : [];
       if (job.zip_file && !zips.includes(job.zip_file)) zips.unshift(job.zip_file);
 
       for (const z of zips) {
         if (!z) continue;
         const fname = z.split('/').pop() || z;
-        if (!seenFilenames.has(fname)) {
+        if (!seenFilenames.has(fname) && !fname.startsWith('Laundry_')) {
           const isJobMatching = isModelMatch(job.test_type, workflow.model) ||
                                 isModelMatch(job.suite, workflow.model) ||
                                 isModelMatch(job.summary?.test_type, workflow.model) ||
@@ -330,78 +363,87 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
           if (!isJobMatching) continue;
 
           seenFilenames.add(fname);
+          let sName = 'CTS';
+          if (fname.includes('GTS')) sName = 'GTS';
+          else if (fname.includes('STS')) sName = 'STS';
+
           list.push({
             filename: fname,
             path: z,
-            test_type: job.test_type,
-            suite: job.suite,
+            plan: 'SMR',
+            suite: sName,
+            test_type: `SMR / ${sName}`,
             status: job.status,
             run_id: job.run_id,
             modifiedAt: job.startedAt,
+            isIndividualSuite: true,
             summary: job.summary ? { total: job.summary.total, passed: job.summary.passed, failed: job.summary.failed } : undefined,
           });
         }
       }
     }
 
-    // Sort newest first
+    // Sort: newest first
     list.sort((a, b) => (b.modifiedAt || 0) - (a.modifiedAt || 0));
     return list;
-  }, [workflowResults, serverResultZips, workflow.model]);
+  }, [workflowResults, serverResultZips, workflow.model, latestBatchName]);
 
   return (
     <div className="accordion-card">
       {/* Root Accordion Header */}
       <div className="accordion-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <div className="accordion-header-left">
-          <button
-            type="button"
-            className="accordion-toggle-btn"
-            aria-label="Toggle workflow accordion"
-          >
-            {isExpanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
-          </button>
-          <div className="accordion-model-info">
-            <span
-              className="accordion-model-name"
-              style={{ color: isLoaded ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+        <div className="accordion-header-top">
+          <div className="accordion-header-left">
+            <button
+              type="button"
+              className="accordion-toggle-btn"
+              aria-label="Toggle workflow accordion"
             >
-              {titleText}
-            </span>
-            {isLoaded && workflow.model && (
-              <span className="badge badge-pc badge-xs">{workflow.model}</span>
-            )}
-          </div>
-        </div>
-
-        <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
-          {isLoaded && (
-            <>
-              <button
-                className="btn btn-suite-primary"
-                title="Jalankan Cuci SMR untuk modul terpilih"
-                onClick={handleRunLaundryAutomation}
-                disabled={workflow.selectedSerials.length === 0}
+              {isExpanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+            </button>
+            <div className="accordion-model-info">
+              <span
+                className="accordion-model-name"
+                style={{ color: isLoaded ? 'var(--text-primary)' : 'var(--text-secondary)' }}
               >
-                <PlayIcon size={13} />
-                <span>Jalankan Automasi</span>
-              </button>
+                {titleText}
+              </span>
+              {isLoaded && workflow.model && (
+                <span className="badge badge-pc badge-xs">{workflow.model}</span>
+              )}
+            </div>
+          </div>
 
+          <div className="accordion-header-meta" onClick={(e) => e.stopPropagation()}>
+            {isLoaded && (
               <span className="badge badge-unit badge-xs">
                 {workflow.selectedSerials.length}/{matchingDevices.length} Unit
               </span>
-            </>
-          )}
-
-          <button
-            className="btn-icon-danger"
-            title="Hapus Laundry Workflow"
-            onClick={() => onRemoveWorkflow(workflow.id)}
-            aria-label="Remove workflow"
-          >
-            <TrashIcon size={15} />
-          </button>
+            )}
+            <button
+              className="btn-icon-danger"
+              title="Hapus Laundry Workflow"
+              onClick={() => onRemoveWorkflow(workflow.id)}
+              aria-label="Remove workflow"
+            >
+              <TrashIcon size={15} />
+            </button>
+          </div>
         </div>
+
+        {isLoaded && (
+          <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
+            <button
+              className={`btn ${isWorkflowRunning ? 'btn-running' : 'btn-suite-primary'} btn-action-full`}
+              title={isWorkflowRunning ? 'Automasi sedang berlangsung' : 'Jalankan Cuci SMR untuk modul terpilih'}
+              onClick={handleRunLaundryAutomation}
+              disabled={workflow.selectedSerials.length === 0 || isWorkflowRunning}
+            >
+              <PlayIcon size={13} />
+              <span>{isWorkflowRunning ? 'Sedang Berjalan...' : 'Jalankan Automasi'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Root Accordion Body */}
@@ -415,12 +457,14 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
             >
               <div className="sub-accordion-title">
                 {isLaundryExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                <span>LAUNDRY ZIP / HASIL PENGUJIAN</span>
+                <span>HASIL PENGUJIAN</span>
               </div>
               <div onClick={(e) => e.stopPropagation()}>
                 <button
-                  className="btn btn-secondary btn-sm"
+                  className="btn btn-secondary btn-xs"
+                  disabled={isWorkflowRunning}
                   onClick={() => onOpenLaundryPicker(workflow.id, workflow.pcId)}
+                  title={isWorkflowRunning ? 'Tidak dapat mengganti Zip saat automasi sedang berjalan' : undefined}
                 >
                   {workflow.selectedZip ? 'Ganti Zip' : 'Pilih Zip'}
                 </button>
@@ -432,40 +476,51 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                 {workflow.selectedZip ? (
                   <div>
                     <div className="laundry-summary-bar">
-                      <div className="laundry-path-display">
-                        <strong>Path:</strong> <code>{workflow.selectedZip}</code>
+                      <div className="laundry-path-display" title={workflow.selectedZip}>
+                        <strong>Zip:</strong> <code>{workflow.selectedZip.split('/').pop() || workflow.selectedZip}</code>
                       </div>
                       <div className="laundry-stats-chips">
-                        <span className="badge badge-neutral badge-xs">
-                          {analysisRows.length} Total Modul
-                        </span>
-                        <span className="badge badge-busy badge-xs">
-                          {failedRows.length} Gagal / Fail
-                        </span>
-                        <span className="badge badge-ready badge-xs">
-                          {workflow.selectedModules.length} Dipilih untuk Retry
-                        </span>
-                        {failedRows.length > 0 && (
+                        <div className="laundry-chips-group">
+                          <span className="badge badge-neutral badge-xs">
+                            {analysisRows.length} Modul
+                          </span>
+                          <span className="badge badge-fail badge-xs">
+                            {failedRows.length} Fail
+                          </span>
+                          <span className="badge badge-ready badge-xs">
+                            {workflow.selectedModules.length} Terpilih
+                          </span>
+                        </div>
+                        <div className="laundry-actions-group">
                           <button
-                            className="btn btn-link btn-xs"
-                            onClick={handleSelectAllFailedModules}
+                            className="btn btn-secondary btn-xs"
+                            disabled={isWorkflowRunning}
+                            onClick={() => {
+                              const allNames = analysisRows.map((r) => r.testcase || r.suite);
+                              const allSelected = allNames.every((n) => workflow.selectedModules.includes(n));
+                              onUpdateWorkflow({
+                                ...workflow,
+                                selectedModules: allSelected ? [] : allNames,
+                              });
+                            }}
+                            title={isWorkflowRunning ? 'Readonly saat automasi sedang berjalan' : undefined}
                           >
-                            Pilih Semua Gagal
+                            {analysisRows.length > 0 && analysisRows.every((r) => workflow.selectedModules.includes(r.testcase || r.suite)) ? 'Uncheck' : 'Check'}
                           </button>
-                        )}
+                        </div>
                       </div>
                     </div>
 
                     {analysisRows.length > 0 ? (
-                      <div className="table-responsive" style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                        <table className="data-table">
+                      <div className="table-responsive laundry-modules-container">
+                        <table className="data-table laundry-modules-table">
                           <thead>
                             <tr>
                               <th style={{ width: '56px', textAlign: 'center' }}>SELECT</th>
                               <th style={{ minWidth: '220px' }}>TESTCASE</th>
                               <th style={{ minWidth: '260px' }}>SUBTESTCASES</th>
                               <th style={{ width: '100px', textAlign: 'center' }}>STATUS</th>
-                              <th style={{ width: '90px', textAlign: 'center' }}>TIME</th>
+                              <th style={{ width: '150px', textAlign: 'center' }}>TIME</th>
                               <th style={{ minWidth: '150px' }}>RESULTS</th>
                             </tr>
                           </thead>
@@ -474,20 +529,51 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                               const moduleName = row.testcase || row.suite;
                               const isChecked = workflow.selectedModules.includes(moduleName);
                               const subInfo = [row.suite_version, row.model, row.result_dir].filter(Boolean).join(' · ');
+                              const subtestStr = (row.subtestcases || '').trim();
+                              const hasSubtests = Boolean(subtestStr && subtestStr !== '-');
 
                               // Calculate dynamic actual testrun metrics
                               const rowUpper = ((row.suite || '') + ' ' + (row.testcase || '')).toUpperCase();
                               const isSts = rowUpper.includes('STS');
                               const isCts = rowUpper.includes('CTS');
                               const isGts = rowUpper.includes('GTS');
+                              const suiteKey = isSts ? 'STS' : isCts ? 'CTS' : isGts ? 'GTS' : '';
 
-                              let statusText = row.status || 'Test Done';
-                              let statusClass = ((row.failed || 0) > 0 || row.status?.toUpperCase() === 'FAIL') ? 'badge-fail' : 'badge-ready';
-                              let timeText = row.time || '00:00:00';
+                              // Find individual suite result from serverResultZips (strictly prioritizing latest session run)
+                              const matchingSuiteZip = serverResultZips.find(
+                                (z) => z.isIndividualSuite && z.suite === suiteKey && z.run_batch === latestBatchName && isModelMatch(z.model, workflow.model)
+                              ) || serverResultZips.find(
+                                (z) => z.isIndividualSuite && z.suite === suiteKey && isModelMatch(z.model, workflow.model)
+                              );
+
+                              let statusText = 'Standby';
+                              let statusClass = 'badge-neutral';
+                              let timeText = row.time || '-';
                               let totalCount = row.total ?? 0;
                               let passedCount = row.passed ?? 0;
                               let failedCount = row.failed ?? 0;
                               let isExecuting = false;
+
+                              // Use individual suite metrics if available
+                              if (matchingSuiteZip?.summary) {
+                                totalCount = matchingSuiteZip.summary.total ?? totalCount;
+                                passedCount = matchingSuiteZip.summary.passed ?? passedCount;
+                                failedCount = matchingSuiteZip.summary.failed ?? failedCount;
+                              }
+
+                              const formatSuiteCompletedTime = (sZip: typeof matchingSuiteZip) => {
+                                if (!sZip) return '-';
+                                const dStr = sZip.summary?.run_time || '-';
+                                if (sZip.summary?.completed_time) {
+                                  const tOnly = sZip.summary.completed_time.split(' ').pop();
+                                  return `${tOnly} (${dStr})`;
+                                }
+                                if (sZip.modifiedAt) {
+                                  const tOnly = new Date(sZip.modifiedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+                                  return `${tOnly} (${dStr})`;
+                                }
+                                return dStr;
+                              };
 
                               if (activeJob) {
                                 if (isChecked) {
@@ -501,9 +587,10 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
                                   const hasSuiteLogs = logs.some((l) => {
                                     if (typeof l !== 'string') return false;
-                                    if (isSts && (l.startsWith('[STS]') || l.includes('sts-tradefed') || l.includes('sts-dynamic-plan'))) return true;
-                                    if (isCts && (l.startsWith('[CTS]') || l.includes('cts-tradefed') || l.includes('cts-console'))) return true;
-                                    if (isGts && (l.startsWith('[GTS]') || l.includes('gts-tradefed') || l.includes('gts-console'))) return true;
+                                    if (l.startsWith('[preflight]') || l.startsWith('[AI Worker]') || l.startsWith('[prepare]') || l.startsWith('[Bridge]')) return false;
+                                    if (isSts && (l.startsWith('[STS]') || l.includes('sts-tf >') || l.includes('sts-dynamic-plan'))) return true;
+                                    if (isCts && (l.startsWith('[CTS]') || l.includes('cts-tf >') || l.includes('cts-console'))) return true;
+                                    if (isGts && (l.startsWith('[GTS]') || l.includes('gts-tf >') || l.includes('gts-console') || l.includes('gts_main'))) return true;
                                     return false;
                                   });
 
@@ -511,70 +598,79 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                     isExecuting = true;
                                     statusText = 'Running';
                                     statusClass = 'badge-running';
-                                    timeText = formatDuration(activeJob.elapsed_secs || 0);
-                                    if (activeJob.summary) {
-                                      totalCount = activeJob.summary.total ?? totalCount;
-                                      passedCount = activeJob.summary.passed ?? passedCount;
-                                      failedCount = activeJob.summary.failed ?? failedCount;
-                                    }
-                                  } else if (hasSuiteLogs) {
-                                    statusText = 'Completed';
+                                    const liveSecs = activeJob.startedAt ? Math.max(0, Math.floor((Date.now() - activeJob.startedAt) / 1000)) : (activeJob.elapsed_secs || 0);
+                                    timeText = formatDurationHms(liveSecs);
+                                  } else if (hasSuiteLogs || matchingSuiteZip) {
+                                    statusText = 'Test Done';
                                     statusClass = 'badge-ready';
-                                    timeText = '-';
+                                    timeText = formatSuiteCompletedTime(matchingSuiteZip);
                                   } else {
-                                    statusText = 'Antri';
+                                    statusText = 'Standby';
                                     statusClass = 'badge-busy';
                                     timeText = '-';
                                   }
                                 } else {
                                   statusText = 'Standby';
                                   statusClass = 'badge-neutral';
+                                  timeText = '-';
                                 }
                               } else if (latestFinishedJob && isChecked) {
-                                if (latestFinishedJob.summary) {
-                                  failedCount = latestFinishedJob.summary.failed ?? 0;
-                                  passedCount = latestFinishedJob.summary.passed ?? 0;
-                                  totalCount = latestFinishedJob.summary.total ?? totalCount;
-                                  timeText = latestFinishedJob.summary.run_time || formatDuration(latestFinishedJob.elapsed_secs || 0) || timeText;
-                                  statusText = failedCount > 0 ? 'FAIL' : 'PASS';
-                                  statusClass = failedCount > 0 ? 'badge-fail' : 'badge-ready';
+                                const logs = Array.isArray(latestFinishedJob.recentLogs) ? latestFinishedJob.recentLogs : [];
+                                const hasExecuted = logs.some((l) => {
+                                  if (typeof l !== 'string') return false;
+                                  if (l.startsWith('[preflight]') || l.startsWith('[AI Worker]') || l.startsWith('[prepare]') || l.startsWith('[Bridge]')) return false;
+                                  if (isSts && (l.startsWith('[STS]') || l.includes('sts-tf >') || l.includes('sts-dynamic-plan'))) return true;
+                                  if (isCts && (l.startsWith('[CTS]') || l.includes('cts-tf >') || l.includes('cts-console'))) return true;
+                                  if (isGts && (l.startsWith('[GTS]') || l.includes('gts-tf >') || l.includes('gts-console'))) return true;
+                                  return false;
+                                });
+
+                                if (hasExecuted || matchingSuiteZip) {
+                                  statusText = 'Test Done';
+                                  statusClass = 'badge-ready';
+                                  timeText = formatSuiteCompletedTime(matchingSuiteZip);
                                 } else {
-                                  statusText = latestFinishedJob.status === 'Failed' ? 'FAIL' : 'PASS';
-                                  statusClass = latestFinishedJob.status === 'Failed' ? 'badge-fail' : 'badge-ready';
-                                  timeText = formatDuration(latestFinishedJob.elapsed_secs || 0) || timeText;
+                                  statusText = 'Standby';
+                                  statusClass = 'badge-neutral';
+                                  timeText = '-';
                                 }
+                              } else if (matchingSuiteZip) {
+                                statusText = 'Test Done';
+                                statusClass = 'badge-ready';
+                                timeText = formatSuiteCompletedTime(matchingSuiteZip);
                               }
 
                               return (
                                 <tr
                                   key={row.id || moduleName}
-                                  className={`${isChecked ? 'row-selected' : ''} ${isExecuting ? 'row-executing' : ''}`}
-                                  onClick={() => handleToggleModule(moduleName)}
-                                  style={{ cursor: 'pointer' }}
+                                  className={`laundry-module-row ${isChecked ? 'row-selected' : ''} ${isExecuting ? 'row-executing' : ''} ${isWorkflowRunning ? 'is-readonly' : ''}`}
+                                  onClick={() => !isWorkflowRunning && handleToggleModule(moduleName)}
+                                  style={{ cursor: isWorkflowRunning ? 'default' : 'pointer' }}
                                 >
-                                  <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
-                                    <label className="switch-toggle" style={{ margin: '0 auto' }}>
+                                  <td className="laundry-cell-select" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                                    <label className={`switch-toggle ${isWorkflowRunning ? 'is-readonly' : ''}`} style={{ margin: '0 auto' }}>
                                       <input
                                         type="checkbox"
                                         checked={isChecked}
-                                        onChange={() => handleToggleModule(moduleName)}
+                                        disabled={isWorkflowRunning}
+                                        onChange={() => !isWorkflowRunning && handleToggleModule(moduleName)}
                                       />
                                       <span className="switch-slider"></span>
                                     </label>
                                   </td>
-                                  <td>
-                                    <div className="mono font-semibold" style={{ fontSize: '0.8125rem' }}>
+                                  <td className="laundry-cell-testcase">
+                                    <div className="mono font-semibold laundry-module-name" style={{ fontSize: '0.8125rem' }}>
                                       {moduleName}
                                     </div>
                                     {subInfo && (
-                                      <div className="text-secondary text-xs" style={{ marginTop: '0.125rem', opacity: 0.75 }}>
+                                      <div className="text-secondary text-xs laundry-module-subinfo" style={{ marginTop: '0.125rem', opacity: 0.75 }}>
                                         {subInfo}
                                       </div>
                                     )}
                                   </td>
-                                  <td>
+                                  <td className={`laundry-cell-subtests ${!hasSubtests ? 'is-empty' : ''}`}>
                                     <div
-                                      className="mono text-xs text-secondary"
+                                      className="mono text-xs text-secondary laundry-subtests-content"
                                       style={{
                                         maxWidth: '380px',
                                         overflow: 'hidden',
@@ -586,32 +682,34 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                       {row.subtestcases || '-'}
                                     </div>
                                   </td>
-                                  <td style={{ textAlign: 'center' }}>
-                                    <span
-                                      className={`badge badge-xs ${statusClass}`}
-                                      style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
-                                    >
+                                  <td className="laundry-cell-status" style={{ textAlign: 'center' }}>
+                                    <span className={`badge badge-status-fixed ${statusClass}`}>
                                       {isExecuting && <span className="spinner-dot" style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'currentColor' }}></span>}
                                       <span>{statusText}</span>
                                     </span>
                                   </td>
-                                  <td className="mono text-xs text-secondary" style={{ textAlign: 'center', fontWeight: isExecuting ? 700 : 400, color: isExecuting ? 'var(--accent-warning, #f59e0b)' : undefined }}>
-                                    {timeText}
+                                  <td className="mono text-xs text-secondary laundry-cell-time" style={{ textAlign: 'center', fontWeight: isExecuting ? 700 : 400, color: isExecuting ? 'var(--accent-warning, #f59e0b)' : undefined }}>
+                                    <span className="laundry-time-text">{timeText}</span>
                                   </td>
-                                  <td>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                      <div className="text-xs text-secondary" style={{ fontSize: '0.7rem' }}>
-                                        Total {totalCount}
+                                  <td className="laundry-cell-results">
+                                    <div className="results-cell-group">
+                                      <div className="results-cell-top">
+                                        <span className="badge badge-neutral badge-chip-fixed" title={`Total: ${totalCount}`}>
+                                          <span className="chip-label">Total</span>
+                                          <span className="chip-circle-val">{totalCount}</span>
+                                        </span>
                                       </div>
-                                      <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
-                                        <span className="badge badge-ready badge-xs" style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}>
-                                          Pass {passedCount}
+                                      <div className="results-cell-bottom">
+                                        <span className="badge badge-ready badge-chip-fixed" title={`Pass: ${passedCount}`}>
+                                          <span className="chip-label">Pass</span>
+                                          <span className="chip-circle-val">{passedCount}</span>
                                         </span>
                                         <span
-                                          className={`badge ${failedCount > 0 ? 'badge-fail' : 'badge-busy'} badge-xs`}
-                                          style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}
+                                          className={`badge ${failedCount > 0 ? 'badge-fail' : 'badge-fail-zero'} badge-chip-fixed`}
+                                          title={`Fail: ${failedCount}`}
                                         >
-                                          Fail {failedCount}
+                                          <span className="chip-label">Fail</span>
+                                          <span className="chip-circle-val">{failedCount}</span>
                                         </span>
                                       </div>
                                     </div>
@@ -631,12 +729,6 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                 ) : (
                   <div className="empty-state-box">
                     <p>Belum ada Zip hasil test Tradefed yang dipilih.</p>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => onOpenLaundryPicker(workflow.id, workflow.pcId)}
-                    >
-                      Pilih Zip dari Node PC
-                    </button>
                   </div>
                 )}
               </div>
@@ -651,13 +743,14 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
             >
               <div className="sub-accordion-title">
                 {isDevicesExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                <span>DEVICES ({matchingDevices.length} Unit Terhubung)</span>
+                <span>DEVICES ({matchingDevices.length} Unit)</span>
               </div>
               <div onClick={(e) => e.stopPropagation()}>
                 <button
                   className="btn btn-secondary btn-xs"
                   onClick={handleSelectAllDevices}
-                  disabled={matchingDevices.length === 0}
+                  disabled={isWorkflowRunning || matchingDevices.length === 0}
+                  title={isWorkflowRunning ? 'Readonly saat automasi sedang berjalan' : undefined}
                 >
                   {matchingDevices.length > 0 &&
                   matchingDevices.every((d) => workflow.selectedSerials.includes(d.serial))
@@ -684,6 +777,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                   workflow.selectedSerials.includes(d.serial)
                                 )
                               }
+                              disabled={isWorkflowRunning}
                               onChange={handleSelectAllDevices}
                             />
                           </th>
@@ -699,16 +793,17 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                           return (
                             <tr
                               key={dev.serial}
-                              className={isChecked ? 'row-selected' : ''}
-                              onClick={() => handleToggleDevice(dev.serial)}
-                              style={{ cursor: 'pointer' }}
+                              className={`${isChecked ? 'row-selected' : ''} ${isWorkflowRunning ? 'is-readonly' : ''}`}
+                              onClick={() => !isWorkflowRunning && handleToggleDevice(dev.serial)}
+                              style={{ cursor: isWorkflowRunning ? 'default' : 'pointer' }}
                             >
                               <td onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   className="checkbox-custom"
                                   checked={isChecked}
-                                  onChange={() => handleToggleDevice(dev.serial)}
+                                  disabled={isWorkflowRunning}
+                                  onChange={() => !isWorkflowRunning && handleToggleDevice(dev.serial)}
                                 />
                               </td>
                               <td className="mono font-medium">{dev.pcId}</td>
@@ -758,12 +853,12 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
             >
               <div className="sub-accordion-title">
                 {isResultsExpanded ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                <span>RESULTS ({readyDownloadZips.length} Master ZIP Siap Download • {workflowResults.length} Riwayat Run)</span>
+                <span>RESULTS ({readyDownloadZips.length} ZIP)</span>
               </div>
               <div className="laundry-stats-chips" onClick={(e) => e.stopPropagation()}>
                 {readyDownloadZips.length > 0 && (
                   <span className="badge badge-ready badge-xs">
-                    📦 {readyDownloadZips.length} ZIP Siap Unduh
+                    📦 Siap Unduh
                   </span>
                 )}
                 {workflowResults.length > 0 && (
@@ -778,17 +873,12 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
               <div className="sub-accordion-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {/* Section A: Ready Overall Result ZIPs List */}
                 <div>
-                  <div style={{ fontSize: '0.8125rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                    <span>📦</span>
-                    <span>OVERALL ZIP HASIL TEST SIAP DOWNLOAD</span>
-                  </div>
-
                   {readyDownloadZips.length > 0 ? (
-                    <div className="table-responsive" style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                    <div className="table-responsive laundry-results-table-container">
                       <table className="data-table">
                         <thead>
                           <tr>
-                            <th>MASTER ZIP FILE</th>
+                            <th>TEST ZIP FILE</th>
                             <th>PLAN / TEST TYPE</th>
                             <th>SIZE</th>
                             <th>WAKTU PEMBUATAN</th>
@@ -808,21 +898,32 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                               : '-';
                             const downloadUrl = `/api/results/download?path=${encodeURIComponent(item.path || '')}&file=${encodeURIComponent(item.filename)}&run_id=${encodeURIComponent(item.run_id || '')}`;
 
-                            const sumTotal = item.summary ? item.summary.total : (analysisRows.reduce((acc, r) => acc + (r.total || 0), 0) || 1);
-                            const sumPassed = item.summary ? item.summary.passed : (analysisRows.reduce((acc, r) => acc + (r.passed || 0), 0) || 1);
-                            const sumFailed = item.summary ? item.summary.failed : analysisRows.reduce((acc, r) => acc + (r.failed || 0), 0);
+                            const sumTotal = item.summary ? item.summary.total : 0;
+                            const sumPassed = item.summary ? item.summary.passed : 0;
+                            const sumFailed = item.summary ? item.summary.failed : 0;
 
                             return (
                               <tr key={`${item.filename}-${idx}`}>
                                 <td>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <span style={{ fontSize: '1.125rem' }}>📦</span>
-                                    <div>
-                                      <div className="mono font-semibold" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                                    <span style={{ fontSize: '1rem', flexShrink: 0 }}>📦</span>
+                                    <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                                      <div
+                                        className="mono font-semibold"
+                                        style={{
+                                          fontSize: '0.78125rem',
+                                          color: 'var(--text-primary)',
+                                          maxWidth: '260px',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                        title={item.filename}
+                                      >
                                         {item.filename}
                                       </div>
                                       {item.run_id && (
-                                        <div className="text-secondary mono text-xs" style={{ opacity: 0.7 }}>
+                                        <div className="text-secondary mono text-xs" style={{ opacity: 0.7, fontSize: '0.7rem' }}>
                                           {item.run_id}
                                         </div>
                                       )}
@@ -830,15 +931,14 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                   </div>
                                 </td>
                                 <td>
-                                  <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                                     <span className="badge badge-pc badge-xs font-semibold">
-                                      {item.test_type || 'TEST'}
+                                      {item.plan || 'SMR'}
                                     </span>
-                                    {item.suite && (
-                                      <span className="badge badge-unit badge-xs">
-                                        {item.suite}
-                                      </span>
-                                    )}
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>/</span>
+                                    <span className="badge badge-unit badge-xs font-semibold">
+                                      {item.suite || 'TEST'}
+                                    </span>
                                   </div>
                                 </td>
                                 <td className="mono text-xs text-secondary">
@@ -847,20 +947,22 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                 <td className="mono text-xs text-secondary">
                                   {timeText}
                                 </td>
-                                <td style={{ textAlign: 'center' }}>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'center' }}>
-                                    <div className="text-xs text-secondary mono" style={{ fontSize: '0.7rem' }}>
-                                      Total {sumTotal}
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center' }}>
-                                      <span className="badge badge-ready badge-xs" style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}>
-                                        Pass {sumPassed}
+                                <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                  <div className="results-cell-group" style={{ margin: '0 auto' }}>
+                                    <div className="results-cell-top">
+                                      <span className="badge badge-neutral badge-chip-fixed" title={`Total: ${sumTotal}`}>
+                                        <span className="chip-label">Total</span>
+                                        <span className="chip-circle-val">{sumTotal}</span>
                                       </span>
-                                      <span
-                                        className={`badge ${sumFailed > 0 ? 'badge-fail' : 'badge-busy'} badge-xs`}
-                                        style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}
-                                      >
-                                        Fail {sumFailed}
+                                    </div>
+                                    <div className="results-cell-bottom">
+                                      <span className="badge badge-ready badge-chip-fixed" title={`Pass: ${sumPassed}`}>
+                                        <span className="chip-label">Pass</span>
+                                        <span className="chip-circle-val">{sumPassed}</span>
+                                      </span>
+                                      <span className={`badge ${sumFailed > 0 ? 'badge-fail' : 'badge-fail-zero'} badge-chip-fixed`} title={`Fail: ${sumFailed}`}>
+                                        <span className="chip-label">Fail</span>
+                                        <span className="chip-circle-val">{sumFailed}</span>
                                       </span>
                                     </div>
                                   </div>
@@ -889,82 +991,6 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                     </div>
                   )}
                 </div>
-
-                {/* Section B: Run Execution Parsing History Table */}
-                {workflowResults.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: '0.8125rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span>📊</span>
-                      <span>RIWAYAT RUN & PARSING EKSEKUSI</span>
-                    </div>
-
-                    <div className="table-responsive" style={{ maxHeight: '240px', overflowY: 'auto' }}>
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>PC ID</th>
-                            <th>TEST TYPE / PLAN</th>
-                            <th>SUITE</th>
-                            <th>DEVICES</th>
-                            <th>DURATION</th>
-                            <th>PASSED</th>
-                            <th>FAILED</th>
-                            <th>TOTAL</th>
-                            <th style={{ textAlign: 'center' }}>STATUS</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {workflowResults.map((job) => {
-                            const summary = job.summary;
-                            const isRunning = job.status === 'Running' || job.status === 'Starting';
-                            const isPass = job.status === 'Finished' || job.status === 'Test Done';
-                            const isFail = job.status === 'Failed' || (summary && summary.failed > 0);
-                            const displayDevices = Array.isArray(job.devices) ? job.devices.join(', ') : (job.devices || '-');
-                            const durationText = summary?.run_time || (job.elapsed_secs ? `${job.elapsed_secs}s` : '-');
-
-                            return (
-                              <tr key={job.run_id}>
-                                <td>
-                                  <span className="badge badge-pc badge-xs">{job.pcId}</span>
-                                </td>
-                                <td>
-                                  <strong>{job.test_type}</strong>
-                                </td>
-                                <td>
-                                  <span className="mono text-xs">{job.suite || '-'}</span>
-                                </td>
-                                <td
-                                  className="mono text-xs"
-                                  style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                  title={displayDevices}
-                                >
-                                  {displayDevices}
-                                </td>
-                                <td className="mono text-xs text-secondary">
-                                  {durationText}
-                                </td>
-                                <td style={{ color: 'var(--status-ready-text)', fontWeight: 600 }}>
-                                  {summary ? summary.passed : '-'}
-                                </td>
-                                <td style={{ color: summary && summary.failed > 0 ? 'var(--status-fail-text)' : 'inherit', fontWeight: 600 }}>
-                                  {summary ? summary.failed : '-'}
-                                </td>
-                                <td>
-                                  {summary ? summary.total : '-'}
-                                </td>
-                                <td style={{ textAlign: 'center' }}>
-                                  <span className={`badge badge-xs ${isRunning ? 'badge-busy' : isPass && !isFail ? 'badge-ready' : 'badge-fail'}`}>
-                                    {job.status.toUpperCase()}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </div>

@@ -63,7 +63,7 @@ export const LaundryWorkflowSection: React.FC<LaundryWorkflowSectionProps> = ({
           onClick={onAddWorkflow}
         >
           <PlusIcon size={16} />
-          <span>Tambah Laundry Workflow</span>
+          <span>Tambah Workflow</span>
         </button>
       </div>
     </section>

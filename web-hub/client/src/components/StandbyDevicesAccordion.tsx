@@ -147,40 +147,46 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
   return (
     <section className="accordion-card standby-card">
       {/* Accordion Header */}
-      <div className="accordion-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <div className="accordion-header-left">
-          <button
-            type="button"
-            className="accordion-toggle-btn"
-            aria-label="Toggle standby devices accordion"
-          >
-            {isExpanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
-          </button>
-          <div className="accordion-model-info">
-            <span className="accordion-model-name">DAFTAR PERANGKAT STANDBY</span>
-            <span className="badge badge-ready badge-xs">{devices.length} Total</span>
+      <div className="accordion-header standby-accordion-header" onClick={() => setIsExpanded(!isExpanded)}>
+        <div className="accordion-header-top">
+          <div className="accordion-header-left">
+            <button
+              type="button"
+              className="accordion-toggle-btn"
+              aria-label="Toggle standby devices accordion"
+            >
+              {isExpanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+            </button>
+            <div className="accordion-model-info">
+              <span className="accordion-model-name">PERANGKAT STANDBY</span>
+            </div>
+          </div>
+
+          <div className="accordion-header-meta" onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span className="standby-count-badge" title={`${devices.length} Perangkat Standby`}>
+              {devices.length}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-reset-busy"
+              onClick={() => {
+                const pcs = Array.from(new Set(devices.map((d) => d.pcId).filter(Boolean)));
+                if (pcs.length === 0) {
+                  onResetBusy('syncmaster');
+                } else {
+                  pcs.forEach((pc) => onResetBusy(pc));
+                }
+              }}
+              title="Reset status sibuk (Busy) semua perangkat menjadi Ready"
+            >
+              <RefreshIcon size={12} />
+              <span className="btn-text-desktop">Reset Busy</span>
+            </button>
           </div>
         </div>
 
-        {/* Switch Button Suite Testplan (1 Model, 1 Testplan at once) & Reset Busy */}
-        <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="btn btn-secondary btn-xs"
-            onClick={() => {
-              const pcs = Array.from(new Set(devices.map((d) => d.pcId).filter(Boolean)));
-              if (pcs.length === 0) {
-                onResetBusy('syncmaster');
-              } else {
-                pcs.forEach((pc) => onResetBusy(pc));
-              }
-            }}
-            title="Reset status sibuk (Busy) semua perangkat menjadi Ready"
-          >
-            <RefreshIcon size={12} />
-            <span>Reset Busy State</span>
-          </button>
-
+        {/* Switch Button Suite Testplan (1 Model, 1 Testplan at once) & Run Standby Button */}
+        <div className="standby-header-actions" onClick={(e) => e.stopPropagation()}>
           <div className="segmented-switch-container">
             {(['SMR', 'SKU', 'NORMAL', 'STS'] as const).map((plan) => (
               <button
@@ -197,7 +203,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
 
           <button
             type="button"
-            className="btn btn-suite-primary"
+            className="btn btn-suite-primary btn-action-full btn-standby-run"
             onClick={handleTriggerRun}
             disabled={selectedSerials.length === 0}
             title={`Jalankan ${activeTestPlan} untuk model ${targetExecutionModel || 'Pilih Perangkat'}`}
@@ -205,7 +211,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
             <PlayIcon size={13} />
             <span>
               {selectedSerials.length > 0
-                ? `Jalankan ${activeTestPlan} (${targetExecutionModel} • ${selectedSerials.length} Unit)`
+                ? `Jalankan ${activeTestPlan} (${selectedSerials.length} Unit)`
                 : `Jalankan ${activeTestPlan}`}
             </span>
           </button>
@@ -217,7 +223,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
           {/* Active Model Lock Notice */}
           {activeSelectedModel && (
             <div className="notice-banner">
-              🔒 <strong>Model Terkunci:</strong> Anda sedang memilih perangkat dengan model <strong>{activeSelectedModel}</strong> ({selectedSerials.length} unit terpilih). Checkbox model lain diblokir untuk memastikan 1 model per eksekusi.
+              🔒 Terpilih: <strong>{activeSelectedModel}</strong> ({selectedSerials.length} unit). Eksekusi dibatasi 1 model per sesi.
             </div>
           )}
 
@@ -243,11 +249,11 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
           </div>
 
           {/* Standby Device Table */}
-          <div className="table-responsive">
-            <table className="data-table">
+          <div className="table-responsive standby-devices-container">
+            <table className="data-table standby-devices-table">
               <thead>
                 <tr>
-                  <th style={{ width: '40px' }}>
+                  <th style={{ width: '40px', textAlign: 'center' }}>
                     <input
                       type="checkbox"
                       className="checkbox-custom"
@@ -270,12 +276,12 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                     return (
                       <tr
                         key={dev.serial}
-                        className={isBlocked ? 'row-blocked' : (isSelected ? 'row-selected' : '')}
+                        className={`standby-device-row ${isBlocked ? 'row-blocked' : ''} ${isSelected ? 'row-selected' : ''}`}
                         onClick={() => handleDeviceRowClick(dev)}
                         style={{ cursor: isBlocked ? 'not-allowed' : 'pointer' }}
                         title={isBlocked ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})` : undefined}
                       >
-                        <td onClick={(e) => e.stopPropagation()}>
+                        <td className="standby-cell-select" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             className="checkbox-custom"
@@ -285,8 +291,10 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                             title={isBlocked ? `Terkunci: Hanya 1 model yang dapat dipilih (Model aktif: ${activeSelectedModel})` : undefined}
                           />
                         </td>
-                        <td className="mono font-medium">{dev.pcId}</td>
-                        <td>
+                        <td className="standby-cell-pcid mono font-medium">
+                          <span className="badge badge-pc badge-xs">{dev.pcId}</span>
+                        </td>
+                        <td className="standby-cell-model">
                           <div className="device-model-cell">
                             <strong>{dev.model}</strong>
                             <span
@@ -297,10 +305,10 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
                           </div>
                           <div className="device-pda-sub">{dev.pda || 'PDA: Auto Detect'}</div>
                         </td>
-                        <td className="mono">{dev.serial}</td>
-                        <td>
+                        <td className="standby-cell-serial mono">{dev.serial}</td>
+                        <td className="standby-cell-status">
                           <span
-                            className={`badge badge-xs ${dev.busy ? 'badge-busy' : 'badge-ready'}`}
+                            className={`badge badge-status-fixed ${dev.busy ? 'badge-busy' : 'badge-ready'}`}
                           >
                             {dev.busy ? dev.busy_reason || 'BUSY' : 'READY'}
                           </span>

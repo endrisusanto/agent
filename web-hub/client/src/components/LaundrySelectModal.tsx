@@ -111,7 +111,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
       >
         <div className="modal-header">
           <div>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Select Laundry Result Zip ({pcId})</h3>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Select Laundry ({pcId})</h3>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
               Pick a previous test result from the node disk to run selective retries
             </p>
@@ -124,12 +124,6 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
         <div className="modal-body">
           {/* Model Filter Chips */}
           <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Filter by Target Model</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                🟢 Dot hijau menandakan perangkat terhubung
-              </span>
-            </label>
             <div
               className="model-pills-bar"
               style={{
@@ -212,9 +206,21 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                       alignItems: 'center',
                     }}
                   >
-                    <div>
-                      <strong style={{ fontSize: '0.8125rem' }}>{z.filename}</strong>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                    <div style={{ minWidth: 0, flex: 1, marginRight: '0.5rem' }}>
+                      <strong
+                        style={{
+                          fontSize: '0.8125rem',
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          maxWidth: '100%',
+                        }}
+                        title={z.filename}
+                      >
+                        {z.filename}
+                      </strong>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {z.model ? `Model: ${z.model} • ` : ''}{formatBytes(z.sizeBytes)} • {new Date(z.modifiedAt).toLocaleString()}
                       </div>
                     </div>
@@ -304,7 +310,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                           </span>
                         )}
                         <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.375rem' }}>
-                          ({laundryAnalysis.rows.length} modules)
+                          ({laundryAnalysis.rows.length})
                         </span>
                       </div>
                     </div>
@@ -370,10 +376,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                                 </div>
                               </td>
                               <td style={{ textAlign: 'center' }}>
-                                <span
-                                  className={`badge badge-xs ${isFail ? 'badge-fail' : 'badge-ready'}`}
-                                  style={{ fontWeight: 600 }}
-                                >
+                                <span className="badge badge-ready badge-status-fixed">
                                   {r.status || 'Test Done'}
                                 </span>
                               </td>
@@ -381,19 +384,24 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                                 {r.time || '00:00:00'}
                               </td>
                               <td>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                  <div className="text-xs text-secondary" style={{ fontSize: '0.7rem' }}>
-                                    Total {r.total ?? 0}
+                                <div className="results-cell-group">
+                                  <div className="results-cell-top">
+                                    <span className="badge badge-neutral badge-chip-fixed" title={`Total: ${r.total ?? 0}`}>
+                                      <span className="chip-label">Total</span>
+                                      <span className="chip-circle-val">{r.total ?? 0}</span>
+                                    </span>
                                   </div>
-                                  <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
-                                    <span className="badge badge-ready badge-xs" style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}>
-                                      Pass {r.passed ?? 0}
+                                  <div className="results-cell-bottom">
+                                    <span className="badge badge-ready badge-chip-fixed" title={`Pass: ${r.passed ?? 0}`}>
+                                      <span className="chip-label">Pass</span>
+                                      <span className="chip-circle-val">{r.passed ?? 0}</span>
                                     </span>
                                     <span
-                                      className={`badge ${(r.failed || 0) > 0 ? 'badge-fail' : 'badge-busy'} badge-xs`}
-                                      style={{ padding: '0.15rem 0.4rem', fontSize: '0.6875rem' }}
+                                      className={`badge ${(r.failed || 0) > 0 ? 'badge-fail' : 'badge-fail-zero'} badge-chip-fixed`}
+                                      title={`Fail: ${r.failed ?? 0}`}
                                     >
-                                      Fail {r.failed ?? 0}
+                                      <span className="chip-label">Fail</span>
+                                      <span className="chip-circle-val">{r.failed ?? 0}</span>
                                     </span>
                                   </div>
                                 </div>
@@ -419,7 +427,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
             onClick={handleConfirm}
             disabled={!selectedZipPath || selectedRowIds.length === 0}
           >
-            Confirm Laundry Selection ({selectedRowIds.length})
+            Confirm Selection ({selectedRowIds.length})
           </button>
         </div>
       </div>

@@ -61,6 +61,7 @@ pub struct LaundryResultInfo {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 pub struct RunSuitePayload {
     pub run_id: Option<String>,
     pub auto_root: Option<String>,

@@ -83,12 +83,26 @@ export interface LaundryRow {
   plan?: string;
 }
 
+export interface LaundryWorkflowState {
+  id: string;
+  model: string;
+  pcId?: string;
+  selectedZip?: string;
+  selectedModules: string[];
+  selectedSerials: string[];
+  pda?: string;
+  ap_version?: string;
+  plan?: string;
+  cachedRows?: LaundryRow[];
+}
+
 export function useFleetWebSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bridges, setBridges] = useState<BridgeInfo[]>([]);
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [activeJobs, setActiveJobs] = useState<ActiveJobItem[]>([]);
   const [jobHistory, setJobHistory] = useState<ActiveJobItem[]>([]);
+  const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>([]);
   const [laundryAnalysis, setLaundryAnalysis] = useState<{
     pcId: string;
     zip_path: string;
@@ -120,6 +134,9 @@ export function useFleetWebSocket() {
           case 'FLEET_STATE': {
             setBridges(msg.bridges || []);
             setDevices(msg.devices || []);
+            if (Array.isArray(msg.workflows) && msg.workflows.length > 0) {
+              setWorkflows(msg.workflows);
+            }
 
             const enrichedActive: ActiveJobItem[] = (msg.activeJobs || []).map((j: ActiveJobItem) => {
               const cached = logsByRunIdRef.current.get(j.run_id) || [];
@@ -254,12 +271,27 @@ export function useFleetWebSocket() {
     fetch('/api/history', { method: 'DELETE' }).catch(() => {});
   }, []);
 
+  const syncWorkflows = useCallback((newWorkflows: LaundryWorkflowState[]) => {
+    setWorkflows(newWorkflows);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'SYNC_WORKFLOWS', workflows: newWorkflows }));
+    }
+    fetch('/api/workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflows: newWorkflows }),
+    }).catch(() => {});
+  }, []);
+
   return {
     isConnected,
     bridges,
     devices,
     activeJobs,
     jobHistory,
+    workflows,
+    setWorkflows,
+    syncWorkflows,
     laundryAnalysis,
     setLaundryAnalysis,
     runSuite,

@@ -33,7 +33,7 @@ export const FilterToolbarCard: React.FC<FilterToolbarCardProps> = ({
         <input
           type="text"
           className="filter-search-input"
-          placeholder="Cari serial number, model, PC ID, atau devnode..."
+          placeholder="Cari serial, model, PC ID..."
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
         />
@@ -57,11 +57,11 @@ export const FilterToolbarCard: React.FC<FilterToolbarCardProps> = ({
           onChange={(e) => onPcIdChange(e.target.value)}
         >
           <option value="ALL">
-            Semua Workstation PC ({bridges.length > 0 ? bridges.length : 1})
+            Workstation ({bridges.length > 0 ? bridges.length : 1})
           </option>
           {bridges.map((b) => (
             <option key={b.pcId} value={b.pcId}>
-              {b.pcId} ({b.ip || 'online'})
+              {b.pcId}
             </option>
           ))}
         </select>
@@ -74,10 +74,10 @@ export const FilterToolbarCard: React.FC<FilterToolbarCardProps> = ({
           value={selectedMode}
           onChange={(e) => onModeChange(e.target.value as 'all' | 'user' | 'userdebug' | 'busy')}
         >
-          <option value="all">Semua Mode</option>
-          <option value="user">User (Production)</option>
-          <option value="userdebug">Userdebug (Eng)</option>
-          <option value="busy">Sedang Sibuk (Busy)</option>
+          <option value="all">Device Mode</option>
+          <option value="user">User</option>
+          <option value="userdebug">Userdebug</option>
+          <option value="busy">Busy</option>
         </select>
       </div>
 

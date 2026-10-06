@@ -1,19 +1,13 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ActiveJobItem, DeviceItem } from '../hooks/useFleetWebSocket';
 import { ChevronDownIcon, ChevronUpIcon, StopIcon, TrashIcon } from './Icons';
+import { formatDurationHms } from '../utils/formatters';
 
 interface RunningWorkflowAccordionProps {
   activeJobs: ActiveJobItem[];
   jobHistory?: ActiveJobItem[];
   devices?: DeviceItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
-}
-
-function formatDuration(secs: number): string {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
 const SingleWorkflowRunner: React.FC<{
@@ -25,6 +19,17 @@ const SingleWorkflowRunner: React.FC<{
   const isRunning = job.status === 'Running' || job.status === 'Starting';
   const isFinished = job.status === 'Finished' || job.status === 'Test Done';
   const isFailed = job.status === 'Failed';
+
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!isRunning) return;
+    const interval = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [isRunning]);
+
+  const currentElapsed = isRunning && job.startedAt
+    ? Math.max(0, Math.floor((Date.now() - job.startedAt) / 1000))
+    : (job.elapsed_secs || 0);
 
   // Active runs default collapsed to keep dashboard clean and avoid visual overwhelm
   const [isParentOpen, setIsParentOpen] = useState<boolean>(false);
@@ -40,9 +45,18 @@ const SingleWorkflowRunner: React.FC<{
   const stsLogRef = useRef<HTMLPreElement>(null);
 
   // Extract model & AP Version from target devices
+  const devicesList: string[] = useMemo(() => {
+    const devs = job.devices as unknown;
+    if (Array.isArray(devs)) return devs;
+    if (typeof devs === 'string' && devs.trim().length > 0) {
+      return devs.split(',').map((s: string) => s.trim()).filter(Boolean);
+    }
+    return [];
+  }, [job.devices]);
+
   const matchedDevice = useMemo(() => {
-    return (devices || []).find((d) => (job.devices || []).includes(d.serial));
-  }, [devices, job.devices]);
+    return (devices || []).find((d) => devicesList.includes(d.serial));
+  }, [devices, devicesList]);
 
   const targetModel = matchedDevice?.model || 'SM-DEVICE';
   const apVersion = matchedDevice?.pda || matchedDevice?.security_patch || '-';
@@ -69,32 +83,35 @@ const SingleWorkflowRunner: React.FC<{
     });
   }, [rawLogs]);
 
-  // CTS Logs
+  // CTS Logs (only genuine CTS tradefed console output)
   const ctsLogs = useMemo(() => {
     return rawLogs
       .filter((l) => {
         if (typeof l !== 'string') return false;
-        return l.startsWith('[CTS]') || l.includes('cts-tradefed') || l.includes('cts-console') || l.includes('cts-smr') || l.includes('cts-sku');
+        if (l.startsWith('[preflight]') || l.startsWith('[AI Worker]') || l.startsWith('[prepare]') || l.startsWith('[Bridge]')) return false;
+        return l.startsWith('[CTS]') || l.includes('cts-tf >') || l.includes('cts-console') || l.includes('cts-smr') || l.includes('cts-sku');
       })
       .map((l) => (l.startsWith('[CTS] ') ? l.substring(6) : l.startsWith('[CTS]') ? l.substring(5) : l));
   }, [rawLogs]);
 
-  // GTS Logs
+  // GTS Logs (only genuine GTS tradefed console output)
   const gtsLogs = useMemo(() => {
     return rawLogs
       .filter((l) => {
         if (typeof l !== 'string') return false;
-        return l.startsWith('[GTS]') || l.includes('gts-tradefed') || l.includes('gts-console') || l.includes('gts_main') || l.includes('gtsmr');
+        if (l.startsWith('[preflight]') || l.startsWith('[AI Worker]') || l.startsWith('[prepare]') || l.startsWith('[Bridge]')) return false;
+        return l.startsWith('[GTS]') || l.includes('gts-tf >') || l.includes('gts-console') || l.includes('gts_main') || l.includes('gtsmr');
       })
       .map((l) => (l.startsWith('[GTS] ') ? l.substring(6) : l.startsWith('[GTS]') ? l.substring(5) : l));
   }, [rawLogs]);
 
-  // STS Logs
+  // STS Logs (only genuine STS tradefed console output)
   const stsLogs = useMemo(() => {
     return rawLogs
       .filter((l) => {
         if (typeof l !== 'string') return false;
-        return l.startsWith('[STS]') || l.includes('sts-tradefed') || l.includes('sts-console') || l.includes('sts-dynamic-plan');
+        if (l.startsWith('[preflight]') || l.startsWith('[AI Worker]') || l.startsWith('[prepare]') || l.startsWith('[Bridge]')) return false;
+        return l.startsWith('[STS]') || l.includes('sts-tf >') || l.includes('sts-console') || l.includes('sts-dynamic-plan');
       })
       .map((l) => (l.startsWith('[STS] ') ? l.substring(6) : l.startsWith('[STS]') ? l.substring(5) : l));
   }, [rawLogs]);
@@ -152,27 +169,25 @@ const SingleWorkflowRunner: React.FC<{
       <pre ref={ref} className="log-console-box" style={{ maxHeight: '240px', overflowY: 'auto' }}>
         {visibleLines.length > 0 ? (
           visibleLines.map((line, idx) => {
-            let color = '#f0f6fc';
-            if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Failed') || line.includes('Exception') || line.includes('error:')) {
-              color = '#ff7b72';
+            let logClass = '';
+            if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Exception') || line.includes('Failed')) {
+              logClass = 'log-fail';
             } else if (line.includes('PASS') || line.includes('Passed') || line.includes('ready') || line.includes('Completed') || line.includes('Test Done')) {
-              color = '#7ee787';
-            } else if (line.includes('WARN') || line.includes('Warning') || line.includes('[roxml]') || line.includes('waiting device reconnect')) {
-              color = '#e3b341';
-            } else if (line.includes('[AI Worker]') || line.includes('[runner]') || line.includes('[Bridge]')) {
-              color = '#79c0ff';
-            } else if (line.includes('[prepare]')) {
-              color = '#56d364';
+              logClass = 'log-pass';
+            } else if (line.includes('WARN') || line.includes('Warning')) {
+              logClass = 'log-warn';
+            } else if (line.includes('[AI Worker]') || line.includes('[runner]') || line.includes('[Bridge]') || line.includes('[prepare]')) {
+              logClass = 'log-info';
             }
 
             return (
-              <div key={idx} className="log-line" style={{ color, fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>
+              <div key={idx} className={`log-line ${logClass}`}>
                 {line}
               </div>
             );
           })
         ) : (
-          <div style={{ color: '#8b949e', textAlign: 'center', padding: '1.5rem', fontSize: '0.8125rem' }}>
+          <div style={{ color: 'var(--log-text-muted, var(--text-muted))', textAlign: 'center', padding: '1.5rem', fontSize: '0.8125rem' }}>
             {emptyMsg}
           </div>
         )}
@@ -180,49 +195,40 @@ const SingleWorkflowRunner: React.FC<{
     );
   };
 
+  const isCancelled = job.status === 'Cancelled';
   const statusBadgeClass = isRunning
     ? 'badge-running'
-    : isFinished
-    ? 'badge-ready'
-    : isFailed
-    ? 'badge-fail'
-    : 'badge-busy';
+    : isCancelled
+    ? 'badge-busy'
+    : 'badge-ready';
 
   const glowClass = isRunning
     ? 'glow-outline-running'
-    : isFinished
-    ? 'glow-outline-finished'
-    : isFailed
-    ? 'glow-outline-failed'
     : 'glow-outline-idle';
 
   const getSuiteStatus = (suiteName: 'STS' | 'CTS' | 'GTS', logs: string[]) => {
     const currentSuite = (job.suite || '').toUpperCase();
-    const hasLogs = logs.length > 0;
+    const isCurrentlyExecuting = isRunning && currentSuite.includes(suiteName);
+    const hasConsoleLogs = logs.length > 0;
     const isFinishedLog = logs.some(
-      (l) => l.includes('tradefed finished') || l.includes('End of Results') || l.includes('All done') || l.includes('Summary')
+      (l) => l.includes('tradefed finished') || l.includes('End of Results') || l.includes('All done') || l.includes('Summary') || l.includes('Saved test result to')
     );
 
-    if (isFinished || (!isRunning && hasLogs)) {
-      const hasFailed = logs.some((l) => l.includes('result: ERROR') || l.includes('FAILED') || l.includes('failed with code'));
-      if (hasFailed) return { text: '✕ FAILED', cls: 'badge-fail' };
-      return { text: '✓ COMPLETED', cls: 'badge-ready' };
-    }
-
     if (isRunning) {
-      if (currentSuite.includes(suiteName)) {
-        return { text: '⚡ RUNNING', cls: 'badge-running' };
+      if (isCurrentlyExecuting) {
+        return { text: 'RUNNING', cls: 'badge-running' };
       }
-      if (hasLogs && isFinishedLog) {
-        return { text: '✓ COMPLETED', cls: 'badge-ready' };
+      if (hasConsoleLogs && isFinishedLog) {
+        return { text: 'COMPLETED', cls: 'badge-ready' };
       }
-      if (hasLogs) {
-        return { text: '⚡ RUNNING', cls: 'badge-running' };
-      }
-      return { text: '⏳ ANTRI', cls: 'badge-busy' };
+      return { text: 'STANDBY', cls: 'badge-busy' };
     }
 
-    return null;
+    if (hasConsoleLogs) {
+      return { text: 'COMPLETED', cls: 'badge-ready' };
+    }
+
+    return { text: 'STANDBY', cls: 'badge-neutral' };
   };
 
   const stsStatus = getSuiteStatus('STS', stsLogs);
@@ -233,68 +239,81 @@ const SingleWorkflowRunner: React.FC<{
     <section className={`laundry-table-card ${glowClass}`} style={{ marginBottom: 0, borderRadius: '10px', overflow: 'hidden', transition: 'all 0.25s ease' }}>
       {/* Testrun Child Accordion Header */}
       <div
-        className="laundry-table-head"
+        className="workflow-run-head"
         onClick={() => setIsParentOpen(!isParentOpen)}
         style={{
           cursor: 'pointer',
-          backgroundColor: 'var(--bg-subtle)',
-          padding: '0.875rem 1.125rem',
           borderRadius: isParentOpen ? '10px 10px 0 0' : '10px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '1rem',
-          flexWrap: 'wrap'
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1, minWidth: '280px' }}>
-          {/* Main Title Row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexWrap: 'wrap' }}>
-            <span style={{ color: 'var(--text-muted)' }}>
-              {isParentOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
-            </span>
-            <span className={`badge ${statusBadgeClass} badge-xs`} style={{ fontWeight: 700 }}>
-              {isRunning ? '⚡ RUNNING' : isFinished ? '✓ FINISHED' : isFailed ? '✕ FAILED' : job.status.toUpperCase()}
-            </span>
-            <strong style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-              WORKFLOW: {job.test_type || job.suite}
-            </strong>
-            {job.pcId && <span className="badge badge-pc badge-xs">{job.pcId}</span>}
-            {targetModel && <span className="badge badge-pc badge-xs">{targetModel}</span>}
-            {apVersion && <span className="badge badge-pc badge-xs mono-cell">{apVersion}</span>}
+        {/* Main Content Area */}
+        <div className="workflow-run-main">
+          {/* Top Row: Chevron, Status, Title, Model, AP, Workstation */}
+          <div className="workflow-run-row-primary">
+            <div className="workflow-run-title-group">
+              <span className="workflow-run-chevron" style={{ color: 'var(--text-muted)' }}>
+                {isParentOpen ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </span>
+              <span className={`badge ${statusBadgeClass}`} style={{ fontWeight: 700, fontSize: '0.725rem' }}>
+                {isRunning ? 'RUNNING' : isCancelled ? 'CANCELLED' : 'FINISHED'}
+              </span>
+              <strong className="workflow-run-title">
+                WORKFLOW: {(job.test_type || job.suite || '').replace(/^Laundry\s+/i, '')}
+              </strong>
+            </div>
+
+            {/* Model & Firmware Badges */}
+            <div className="workflow-run-meta-badges">
+              {targetModel && <span className="badge badge-pc">{targetModel}</span>}
+              {apVersion && apVersion !== '-' && <span className="badge badge-pc mono-cell">{apVersion}</span>}
+              {job.pcId && <span className="badge badge-pc">{job.pcId}</span>}
+            </div>
           </div>
 
-          {/* Subtitle / Newline Details */}
-          <div style={{ paddingLeft: '1.625rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span className="mono-cell" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              ({(job.devices || []).join(', ')} • {job.pcId} • {job.run_id})
-            </span>
-          </div>
+          {/* Bottom Row: Devices Serials List Strip */}
+          {devicesList.length > 0 && (
+            <div className="workflow-run-row-secondary">
+              <span className="workflow-serials-label">
+                DEVICES ({devicesList.length}):
+              </span>
+              <div className="workflow-serials-scroll hide-scrollbar">
+                {devicesList.map((serial) => (
+                  <span key={serial} className="badge badge-pc mono-cell" style={{ flexShrink: 0 }}>
+                    {serial}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Right Section: Timer, Action (Cancel Flow), and Delete/Dismiss Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        {/* Right Action Area: Timer, Action (Cancel Flow), and Delete/Dismiss Button */}
+        <div className="workflow-run-actions" onClick={(e) => e.stopPropagation()}>
           <span
-            className="mono-cell"
+            className="mono-cell workflow-run-timer"
             style={{
               fontSize: '0.8125rem',
               color: isRunning ? 'var(--accent-warning, #f59e0b)' : 'var(--text-secondary)',
-              fontWeight: isRunning ? 700 : 400,
+              fontWeight: isRunning ? 700 : 600,
               backgroundColor: 'var(--bg-card, rgba(255,255,255,0.04))',
-              padding: '0.2rem 0.5rem',
-              borderRadius: '4px',
-              border: '1px solid var(--border-color, rgba(255,255,255,0.08))'
+              padding: '0.25rem 0.65rem',
+              borderRadius: 'var(--radius-full)',
+              border: '1px solid var(--border-subtle)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              height: '28px'
             }}
           >
-            ⏱ {formatDuration(job.elapsed_secs || 0)}
+            ⏱ {formatDurationHms(currentElapsed)}
           </span>
           {isRunning && (
             <button
-              className="btn btn-danger btn-xs"
+              className="btn btn-danger btn-xs btn-cancel-flow"
               onClick={() => onCancelJob(job.pcId, job.run_id)}
               title="Cancel Flow"
             >
-              <StopIcon size={11} />
+              <StopIcon size={12} />
               <span>Cancel Flow</span>
             </button>
           )}
@@ -303,15 +322,16 @@ const SingleWorkflowRunner: React.FC<{
             onClick={() => onDismiss(job.run_id)}
             title="Tutup / Dismiss Accordion Log Run ini"
             aria-label="Dismiss Run Accordion"
+            style={{ width: '28px', height: '28px', borderRadius: 'var(--radius-full)' }}
           >
-            <TrashIcon size={14} />
+            <TrashIcon size={13} />
           </button>
         </div>
       </div>
 
       {/* Testrun Child Accordion Body */}
       {isParentOpen && (
-        <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+        <div style={{ padding: '0.5rem 0.65rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
           {/* 1. AI Worker & Agentic Flow Summary (Top Section) */}
           <section className="running-log-card" style={{ marginBottom: 0 }}>
             <div
@@ -320,19 +340,18 @@ const SingleWorkflowRunner: React.FC<{
               onClick={() => setIsAiWorkerOpen(!isAiWorkerOpen)}
             >
               <div className="running-log-head-title">
-                <span>🤖 AI WORKER & AGENTIC FLOW SUMMARY</span>
-                <span className="badge badge-pc badge-xs">{aiWorkerLogs.length} Events</span>
+                <span>Summary</span>
+                <span className="badge badge-pc badge-xs">{aiWorkerLogs.length}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                 <button
                   className="log-clear-btn"
                   onClick={() => handleClearSection('ai_worker', aiWorkerLogs.length)}
+                  title="Clear log"
+                  aria-label="Clear log"
                 >
-                  Clear
+                  <TrashIcon size={12} />
                 </button>
-                <span style={{ color: 'var(--text-muted)' }}>
-                  {isAiWorkerOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                </span>
               </div>
             </div>
             {isAiWorkerOpen && (
@@ -343,7 +362,7 @@ const SingleWorkflowRunner: React.FC<{
           </section>
 
           {/* 2. Individual Suite Accordions Grid */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
             {/* Child 1: STS Tradefed Runner */}
             <section className="running-log-card" style={{ marginBottom: 0 }}>
               <div
@@ -352,8 +371,8 @@ const SingleWorkflowRunner: React.FC<{
                 onClick={() => setIsStsOpen(!isStsOpen)}
               >
                 <div className="running-log-head-title">
-                  <span>🛡️ STS TRADEFED RUNNER</span>
-                  <span className="badge badge-unit badge-xs">{stsLogs.length} Lines</span>
+                  <span>STS</span>
+                  <span className="badge badge-unit badge-xs">{stsLogs.length}</span>
                   {stsStatus && (
                     <span className={`badge ${stsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {stsStatus.text}
@@ -364,12 +383,11 @@ const SingleWorkflowRunner: React.FC<{
                   <button
                     className="log-clear-btn"
                     onClick={() => handleClearSection('sts', stsLogs.length)}
+                    title="Clear log"
+                    aria-label="Clear log"
                   >
-                    Clear
+                    <TrashIcon size={12} />
                   </button>
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isStsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                  </span>
                 </div>
               </div>
               {isStsOpen && (
@@ -387,8 +405,8 @@ const SingleWorkflowRunner: React.FC<{
                 onClick={() => setIsCtsOpen(!isCtsOpen)}
               >
                 <div className="running-log-head-title">
-                  <span>🧪 CTS TRADEFED RUNNER</span>
-                  <span className="badge badge-unit badge-xs">{ctsLogs.length} Lines</span>
+                  <span>CTS</span>
+                  <span className="badge badge-unit badge-xs">{ctsLogs.length}</span>
                   {ctsStatus && (
                     <span className={`badge ${ctsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {ctsStatus.text}
@@ -399,12 +417,11 @@ const SingleWorkflowRunner: React.FC<{
                   <button
                     className="log-clear-btn"
                     onClick={() => handleClearSection('cts', ctsLogs.length)}
+                    title="Clear log"
+                    aria-label="Clear log"
                   >
-                    Clear
+                    <TrashIcon size={12} />
                   </button>
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isCtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                  </span>
                 </div>
               </div>
               {isCtsOpen && (
@@ -422,8 +439,8 @@ const SingleWorkflowRunner: React.FC<{
                 onClick={() => setIsGtsOpen(!isGtsOpen)}
               >
                 <div className="running-log-head-title">
-                  <span>⚡ GTS TRADEFED RUNNER</span>
-                  <span className="badge badge-unit badge-xs">{gtsLogs.length} Lines</span>
+                  <span>GTS</span>
+                  <span className="badge badge-unit badge-xs">{gtsLogs.length}</span>
                   {gtsStatus && (
                     <span className={`badge ${gtsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {gtsStatus.text}
@@ -434,12 +451,11 @@ const SingleWorkflowRunner: React.FC<{
                   <button
                     className="log-clear-btn"
                     onClick={() => handleClearSection('gts', gtsLogs.length)}
+                    title="Clear log"
+                    aria-label="Clear log"
                   >
-                    Clear
+                    <TrashIcon size={12} />
                   </button>
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isGtsOpen ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
-                  </span>
                 </div>
               </div>
               {isGtsOpen && (
@@ -502,11 +518,18 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
     return displayRuns.filter((j) => j.status === 'Finished' || j.status === 'Test Done').length;
   }, [displayRuns]);
 
+  const [masterTick, setMasterTick] = useState(0);
+  useEffect(() => {
+    if (activeCount === 0) return;
+    const interval = setInterval(() => setMasterTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [activeCount]);
+
   const activeElapsed = useMemo(() => {
     const activeJobsList = displayRuns.filter((j) => j.status === 'Running' || j.status === 'Starting');
     if (activeJobsList.length === 0) return 0;
-    return Math.max(...activeJobsList.map((j) => j.elapsed_secs || 0));
-  }, [displayRuns]);
+    return Math.max(...activeJobsList.map((j) => (j.startedAt ? Math.max(0, Math.floor((Date.now() - j.startedAt) / 1000)) : (j.elapsed_secs || 0))));
+  }, [displayRuns, masterTick]);
 
   const handleDismiss = (run_id: string) => {
     setDismissedRunIds((prev) => [...prev, run_id]);
@@ -538,29 +561,13 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
             {isMasterOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '1.2rem' }}>⚡</span>
             <span style={{ fontSize: '0.9375rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '0.01em' }}>
-              WORKFLOW RUNS & LOGS
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-            {activeCount > 0 && (
-              <span className="badge badge-running badge-xs" style={{ fontWeight: 700 }}>
-                ⚡ {activeCount} Aktif Berjalan
-              </span>
-            )}
-            {finishedCount > 0 && (
-              <span className="badge badge-ready badge-xs">
-                ✓ {finishedCount} Selesai
-              </span>
-            )}
-            <span className="badge badge-neutral badge-xs">
-              {displayRuns.length} Total Run
+              RUNS & LOGS
             </span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginLeft: 'auto' }} onClick={(e) => e.stopPropagation()}>
           {activeCount > 0 && (
             <span
               className="mono-cell"
@@ -574,7 +581,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
                 border: '1px solid var(--border-color, rgba(255,255,255,0.08))'
               }}
             >
-              ⏱ {formatDuration(activeElapsed)}
+              ⏱ {formatDurationHms(activeElapsed)}
             </span>
           )}
           {dismissedRunIds.length > 0 && (
@@ -586,8 +593,11 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
               Restore Closed Runs
             </button>
           )}
-          <span style={{ color: 'var(--text-muted)' }}>
-            {isMasterOpen ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}
+          <span
+            className="workflow-count-badge"
+            title={`${finishedCount} Selesai / ${displayRuns.length} Total Run`}
+          >
+            {finishedCount}/{displayRuns.length}
           </span>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ActiveJobItem } from '../hooks/useFleetWebSocket';
 import { CloseIcon, StopIcon, TerminalIcon, RefreshIcon } from './Icons';
+import { formatDurationHms } from '../utils/formatters';
 
 interface TerminalLogsModalProps {
   isOpen: boolean;
@@ -9,13 +10,6 @@ interface TerminalLogsModalProps {
   jobHistory: ActiveJobItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
   selectedRunId?: string;
-}
-
-function formatDuration(secs: number): string {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
 export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
@@ -46,6 +40,17 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
 
   const activeJob = allRuns.find((j) => j.run_id === currentRunId) || allRuns[0];
   const isRunning = activeJobs.some((j) => j.run_id === activeJob?.run_id);
+
+  const [, setModalTick] = useState(0);
+  useEffect(() => {
+    if (!isOpen || !isRunning) return;
+    const interval = setInterval(() => setModalTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [isOpen, isRunning]);
+
+  const activeElapsed = (isRunning && activeJob?.startedAt)
+    ? Math.max(0, Math.floor((Date.now() - activeJob.startedAt) / 1000))
+    : (activeJob?.elapsed_secs || 0);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -99,7 +104,7 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
                   {isRunning ? 'RUNNING' : activeJob.status.toUpperCase()}
                 </span>
                 <span className="mono-cell" style={{ fontSize: '0.75rem' }}>
-                  ⏱ {formatDuration(activeJob.elapsed_secs || 0)}
+                  ⏱ {formatDurationHms(activeElapsed)}
                 </span>
               </div>
             )}
@@ -171,39 +176,39 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
         {/* Terminal Log Output Window */}
         <div
           ref={logContainerRef}
+          className="log-console-box"
           style={{
             flex: 1,
-            backgroundColor: '#0d1117',
-            color: '#e6edf3',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.8125rem',
-            lineHeight: 1.6,
-            padding: '1rem 1.25rem',
-            overflowY: 'auto',
+            maxHeight: 'none',
+            minHeight: '260px',
+            fontSize: '0.6875rem',
+            lineHeight: 1.4,
+            padding: '0.75rem 1rem',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
+            borderRadius: '0 0 var(--radius-lg) var(--radius-lg)',
           }}
         >
           {activeJob?.recentLogs && activeJob.recentLogs.length > 0 ? (
             activeJob.recentLogs.map((line, idx) => {
-              let color = '#c9d1d9';
+              let logClass = '';
               if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Exception') || line.includes('Failed')) {
-                color = '#ff7b72';
+                logClass = 'log-fail';
               } else if (line.includes('PASS') || line.includes('Passed') || line.includes('Done') || line.includes('Finished')) {
-                color = '#7ee787';
+                logClass = 'log-pass';
               } else if (line.includes('WARN') || line.includes('Warning')) {
-                color = '#d29922';
-              } else if (line.includes('[Bridge]') || line.includes('[Hub]')) {
-                color = '#79c0ff';
+                logClass = 'log-warn';
+              } else if (line.includes('[Bridge]') || line.includes('[Hub]') || line.includes('[AI Worker]')) {
+                logClass = 'log-info';
               }
               return (
-                <div key={idx} style={{ color }}>
+                <div key={idx} className={`log-line ${logClass}`}>
                   {line}
                 </div>
               );
             })
           ) : (
-            <div style={{ color: '#8b949e', textAlign: 'center', padding: '3rem' }}>
+            <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '3rem', fontSize: '0.75rem' }}>
               {isRunning ? '⏳ Menunggu stream log Tradefed dari bridge node...' : 'Belum ada log stream pada session ini.'}
             </div>
           )}

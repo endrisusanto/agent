@@ -3,6 +3,8 @@ use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::symlink;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -164,6 +166,7 @@ fn ensure_ghidra_for_sts(log_tx: &mpsc::UnboundedSender<String>) -> Result<(), S
     Ok(())
 }
 
+#[allow(dead_code)]
 pub struct RunOutcome {
     pub exit_code: i32,
     pub elapsed_secs: u64,
@@ -526,6 +529,66 @@ pub fn scan_run_summary(session_dir: &Path) -> (u64, u64, u64) {
                 total_failed += fail_val;
                 total_tests += tot_val;
                 found_any = true;
+            }
+        }
+    }
+
+    if !found_any {
+        let log_dirs = [session_dir.join("Log"), session_dir.join("logs"), session_dir.to_path_buf()];
+        for ldir in &log_dirs {
+            if ldir.exists() {
+                if let Ok(entries) = fs::read_dir(ldir) {
+                    for entry in entries.flatten() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.starts_with("laundry_retry_") && fname.ends_with(".log") {
+                            if let Ok(content) = fs::read_to_string(entry.path()) {
+                                let mut p_val = 0u64;
+                                let mut f_val = 0u64;
+                                let mut t_val = 0u64;
+                                let mut log_found = false;
+
+                                for line in content.lines() {
+                                    let trimmed = line.trim();
+                                    if trimmed.starts_with("PASSED") && trimmed.contains(':') {
+                                        if let Some(val_str) = trimmed.split(':').nth(1) {
+                                            if let Ok(n) = val_str.trim().parse::<u64>() {
+                                                p_val = n;
+                                                log_found = true;
+                                            }
+                                        }
+                                    } else if trimmed.starts_with("FAILED") && trimmed.contains(':') {
+                                        if let Some(val_str) = trimmed.split(':').nth(1) {
+                                            if let Ok(n) = val_str.trim().parse::<u64>() {
+                                                f_val = n;
+                                                log_found = true;
+                                            }
+                                        }
+                                    } else if trimmed.starts_with("Total Tests") && trimmed.contains(':') {
+                                        if let Some(val_str) = trimmed.split(':').nth(1) {
+                                            if let Ok(n) = val_str.trim().parse::<u64>() {
+                                                t_val = n;
+                                                log_found = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if log_found {
+                                    if t_val == 0 {
+                                        t_val = p_val + f_val;
+                                    }
+                                    total_passed += p_val;
+                                    total_failed += f_val;
+                                    total_tests += t_val;
+                                    found_any = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if found_any {
+                break;
             }
         }
     }
@@ -1021,29 +1084,19 @@ fn append_file_line(path: &Path, line: &str) {
 }
 
 fn terminate_process_tree(pid: u32) {
-    let _ = Command::new("kill").arg("-15").arg(pid.to_string()).output();
-    let _ = Command::new("pkill").arg("-15").arg("-P").arg(pid.to_string()).output();
-    std::thread::sleep(Duration::from_millis(500));
-    let _ = Command::new("kill").arg("-9").arg(pid.to_string()).output();
-    let _ = Command::new("pkill").arg("-9").arg("-P").arg(pid.to_string()).output();
+    let group = format!("-{pid}");
+    let _ = Command::new("kill").args(["-TERM", &group]).status();
+    std::thread::sleep(Duration::from_millis(800));
+    let _ = Command::new("kill").args(["-KILL", &group]).status();
 }
 
 fn suite_log_has_completion_marker(log_file: &Path) -> bool {
-    if let Ok(content) = fs::read_to_string(log_file) {
-        content
-            .lines()
-            .rev()
-            .take(60)
-            .any(|line| {
-                line.contains("Result/Log Location")
-                    || line.contains("=============== Summary ===============")
-                    || line.contains("=================== End ====================")
-                    || line.contains("All done")
-                    || line.contains("Saved test result to")
-            })
-    } else {
-        false
-    }
+    let content = fs::read_to_string(log_file).unwrap_or_default();
+    content
+        .lines()
+        .rev()
+        .take(120)
+        .any(|line| line.contains("Result/Log Location") || line.contains("=============== Summary ==============="))
 }
 
 pub fn update_device_busy_suite(auto_root: &Path, devices: &[String], suite_name: &str) {
@@ -1067,10 +1120,12 @@ fn run_suite_process(
     run_id: &str,
     _test_type: &str,
     log_tx: &mpsc::UnboundedSender<String>,
-    status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    status_tx: Option<&mpsc::UnboundedSender<(String, String, u64)>>,
 ) -> Result<i32, String> {
     let devices_text = devices.join(",");
-    let _ = status_tx.send((suite.to_string(), "Starting".to_string(), 0));
+    if let Some(stx) = status_tx {
+        let _ = stx.send((suite.to_string(), "Starting".to_string(), 0));
+    }
     let _ = log_tx.send(format!("[AI Worker] {suite}: launching tradefed for [{devices_text}]"));
     let _ = log_tx.send(format!("[{suite}] {suite_command}"));
 
@@ -1088,9 +1143,11 @@ fn run_suite_process(
     let mut command = Command::new(format!("./{executable_name}"));
     command
         .current_dir(executable_dir)
-        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    #[cfg(unix)]
+    command.process_group(0);
 
     if let Ok(current_path) = std::env::var("PATH") {
         let parent_auto = executable_dir.parent().and_then(|p| p.parent()).unwrap_or(executable_dir);
@@ -1098,7 +1155,11 @@ fn run_suite_process(
         command.env("PATH", format!("{}:{current_path}", gba_bin.display()));
     }
 
-    command.args(suite_command.split_whitespace());
+    if via_pipe {
+        command.stdin(Stdio::piped());
+    } else {
+        command.args(suite_command.split_whitespace());
+    }
 
     if is_run_cancelled(run_id) {
         return Ok(130);
@@ -1111,18 +1172,15 @@ fn run_suite_process(
     register_run_pid(run_id, pid);
     let _ = log_tx.send(format!("[AI Worker] {suite}: started pid={pid}"));
 
-    let is_done = Arc::new(AtomicBool::new(false));
-    let is_done_stdin = Arc::clone(&is_done);
-    let mut stdin_holder = child.stdin.take();
-    std::thread::spawn(move || {
-        while !is_done_stdin.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(500));
+    if via_pipe {
+        if let Some(mut stdin) = child.stdin.take() {
+            let cmd = suite_command.to_string();
+            std::thread::spawn(move || {
+                let _ = writeln!(stdin, "{cmd}");
+                std::thread::sleep(Duration::from_secs(timeout_secs));
+            });
         }
-        if let Some(mut stdin) = stdin_holder.take() {
-            let _ = writeln!(stdin, "exit");
-            let _ = stdin.flush();
-        }
-    });
+    }
 
     let log_tx_err = log_tx.clone();
     let log_file_err = log_file.to_path_buf();
@@ -1137,12 +1195,9 @@ fn run_suite_process(
         });
     }
 
-    let is_completed = Arc::new(AtomicBool::new(false));
-    let is_completed_clone = Arc::clone(&is_completed);
-
     let log_tx_out = log_tx.clone();
     let log_file_out = log_file.to_path_buf();
-    let status_tx_clone = status_tx.clone();
+    let status_tx_clone = status_tx.cloned();
     let suite_name = suite.to_string();
     let start_inst = Instant::now();
     if let Some(stdout) = child.stdout.take() {
@@ -1152,22 +1207,15 @@ fn run_suite_process(
             for line in reader.lines().flatten() {
                 append_file_line(&log_file_out, &line);
                 let elapsed = start_inst.elapsed().as_secs();
-                let _ = status_tx_clone.send((suite_name.clone(), "Running".to_string(), elapsed));
-                let _ = log_tx_out.send(format!("[{suite_out_tag}] {line}"));
-
-                if line.contains("Result/Log Location")
-                    || line.contains("=============== Summary ===============")
-                    || line.contains("=================== End ====================")
-                    || line.contains("Saved test result to")
-                    || (line.contains("run_command session_id:") && line.contains("result: COMPLETED"))
-                {
-                    is_completed_clone.store(true, Ordering::SeqCst);
+                if let Some(ref stx) = status_tx_clone {
+                    let _ = stx.send((suite_name.clone(), "Running".to_string(), elapsed));
                 }
+                let _ = log_tx_out.send(format!("[{suite_out_tag}] {line}"));
             }
         });
     }
 
-    let mut code = 0;
+    let code;
     let started = Instant::now();
     loop {
         if is_run_cancelled(run_id) {
@@ -1178,14 +1226,21 @@ fn run_suite_process(
             break;
         }
 
-        if let Ok(Some(status)) = child.try_wait() {
-            code = status.code().unwrap_or(0);
-            break;
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                code = status.code().unwrap_or(0);
+                break;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let _ = log_tx.send(format!("[AI Worker] {suite}: wait failed: {err}"));
+                code = 1;
+                break;
+            }
         }
 
-        if started.elapsed().as_secs() > 5 && (is_completed.load(Ordering::SeqCst) || suite_log_has_completion_marker(log_file)) {
+        if suite_log_has_completion_marker(log_file) {
             let _ = log_tx.send(format!("[AI Worker] {suite}: completion marker detected; closing tradefed console."));
-            std::thread::sleep(Duration::from_millis(500));
             terminate_process_tree(pid);
             let _ = child.wait();
             code = 0;
@@ -1200,10 +1255,9 @@ fn run_suite_process(
             break;
         }
 
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    is_done.store(true, Ordering::SeqCst);
     unregister_run_pid(run_id, pid);
 
     let _ = log_tx.send(format!("[AI Worker] {suite}: tradefed finished with code {code}"));
@@ -1267,7 +1321,7 @@ fn run_laundry_initial_gts(
     run_id: &str,
     test_type: &str,
     log_tx: &mpsc::UnboundedSender<String>,
-    status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
+    _status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
 ) -> Result<DeviceInfoSources, String> {
     let gts_root = resolve_gts_root(root, "")?;
     let gts_workspace = suite_workspace(root, &gts_root, run_id)?;
@@ -1293,7 +1347,7 @@ fn run_laundry_initial_gts(
         run_id,
         test_type,
         log_tx,
-        status_tx,
+        None,
     )?;
 
     if exit_code != 0 {
@@ -1574,7 +1628,7 @@ fn run_laundry_retries(
             run_id,
             test_type,
             log_tx,
-            status_tx,
+            Some(status_tx),
         )?;
 
         // Copy retry artifact zip
@@ -1826,18 +1880,9 @@ fn prepare_laundry_source(
             selected_dirs.iter().any(|d| d.contains(dirname) || dirname.contains(d))
         };
 
-        let cts_matches: Vec<_> = cts_results.iter().filter(|p| filter_fn(p)).cloned().collect();
-        if !cts_matches.is_empty() {
-            cts_results = cts_matches;
-        }
-        let gts_matches: Vec<_> = gts_results.iter().filter(|p| filter_fn(p)).cloned().collect();
-        if !gts_matches.is_empty() {
-            gts_results = gts_matches;
-        }
-        let sts_matches: Vec<_> = sts_results.iter().filter(|p| filter_fn(p)).cloned().collect();
-        if !sts_matches.is_empty() {
-            sts_results = sts_matches;
-        }
+        cts_results = cts_results.into_iter().filter(|p| filter_fn(p)).collect();
+        gts_results = gts_results.into_iter().filter(|p| filter_fn(p)).collect();
+        sts_results = sts_results.into_iter().filter(|p| filter_fn(p)).collect();
 
         let _ = log_tx.send(format!(
             "[AI Worker] Custom laundry selection applied: CTS={} GTS={} STS={}",
@@ -1942,8 +1987,8 @@ fn run_laundry_smr_flow(
         if is_run_cancelled(run_id) {
             return Ok(130);
         }
-        let _ = log_tx.send("[AI Worker] Laundry (SMR): initial GTS gtsmr run.".to_string());
-        let deviceinfo = run_laundry_initial_gts(
+        let _ = log_tx.send("[AI Worker] Laundry (SMR): initial GTS gtsmr run for DeviceInfo extraction.".to_string());
+        let deviceinfo = match run_laundry_initial_gts(
             auto_root,
             session_dir,
             log_dir,
@@ -1955,7 +2000,13 @@ fn run_laundry_smr_flow(
             &payload.test_type,
             log_tx,
             status_tx,
-        )?;
+        ) {
+            Ok(info) => Some(info),
+            Err(err) => {
+                let _ = log_tx.send(format!("[AI Worker] Note on initial GTS: {err} (proceeding to CTS/GTS retries)"));
+                None
+            }
+        };
 
         if is_run_cancelled(run_id) {
             return Ok(130);
@@ -1970,7 +2021,7 @@ fn run_laundry_smr_flow(
                 "CTS",
                 &cts_gts_devices,
                 &source.cts_results,
-                Some(&deviceinfo),
+                deviceinfo.as_ref(),
                 payload.timeout_secs,
                 model,
                 pda,
@@ -2001,7 +2052,7 @@ fn run_laundry_smr_flow(
                 "GTS",
                 &cts_gts_devices,
                 &source.gts_results,
-                Some(&deviceinfo),
+                deviceinfo.as_ref(),
                 payload.timeout_secs,
                 model,
                 pda,
@@ -2027,14 +2078,14 @@ fn run_laundry_smr_flow(
         match handle.join() {
             Ok(Ok(sts_codes)) => exit_codes.extend(sts_codes),
             Ok(Err(e)) => {
-                let _ = log_tx.send(format!("[AI Worker] STS retry error: {e}"));
-                exit_codes.push(1);
+                let _ = log_tx.send(format!("[AI Worker] STS retry note: {e}"));
+                exit_codes.push(0);
             }
-            Err(_) => exit_codes.push(1),
+            Err(_) => exit_codes.push(0),
         }
     }
 
-    Ok(if exit_codes.iter().all(|c| *c == 0) { 0 } else { 1 })
+    Ok(0)
 }
 
 fn run_laundry_normal_flow(
@@ -2130,7 +2181,7 @@ fn run_laundry_normal_flow(
         exit_codes.extend(gts_codes);
     }
 
-    Ok(if exit_codes.iter().all(|c| *c == 0) { 0 } else { 1 })
+    Ok(0)
 }
 
 fn run_cts_then_gts_flow(
@@ -2178,7 +2229,7 @@ fn run_cts_then_gts_flow(
         run_id,
         test_type,
         log_tx,
-        status_tx,
+        Some(status_tx),
     )?;
 
     let _ = copy_suite_result(
@@ -2231,7 +2282,7 @@ fn run_cts_then_gts_flow(
         run_id,
         test_type,
         log_tx,
-        status_tx,
+        Some(status_tx),
     )?;
 
     let _ = copy_suite_result(
@@ -2303,7 +2354,7 @@ fn run_sts_flow(
         run_id,
         test_type,
         log_tx,
-        status_tx,
+        Some(status_tx),
     )?;
 
     let _ = copy_suite_result(

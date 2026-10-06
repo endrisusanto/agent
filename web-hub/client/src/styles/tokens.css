@@ -74,6 +74,15 @@
   --accent-subtle: #ddf4ff;
   --accent-border: #54aeff;
   --accent-text: #0969da;
+
+  /* Console Log Box Tokens */
+  --log-bg: #ffffff;
+  --log-text-default: #1f2328;
+  --log-text-pass: #1a7f37;
+  --log-text-fail: #cf222e;
+  --log-text-warn: #9a6700;
+  --log-text-info: #0969da;
+  --log-text-muted: #57606a;
 }
 
 /* Dark Theme Tokens */
@@ -130,4 +139,13 @@
   --accent-subtle: #112338;
   --accent-border: #388bfd;
   --accent-text: #58a6ff;
+
+  /* Console Log Box Tokens */
+  --log-bg: #0d1117;
+  --log-text-default: #e6edf3;
+  --log-text-pass: #3fb950;
+  --log-text-fail: #f85149;
+  --log-text-warn: #d29922;
+  --log-text-info: #58a6ff;
+  --log-text-muted: #8b949e;
 }

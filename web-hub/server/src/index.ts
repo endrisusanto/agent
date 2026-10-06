@@ -68,7 +68,7 @@ export interface SuiteSummary {
   total: number;
   passed: number;
   failed: number;
-  pcId: string;
+  pcId?: string;
 }
 
 export interface ActiveJob {
@@ -86,7 +86,69 @@ export interface ActiveJob {
   recentLogs: string[];
 }
 
+export interface LaundryWorkflowState {
+  id: string;
+  model: string;
+  pcId?: string;
+  selectedZip?: string;
+  selectedModules: string[];
+  selectedSerials: string[];
+  pda?: string;
+  ap_version?: string;
+  plan?: string;
+  cachedRows?: any[];
+}
+
+export function formatDurationHms(val: number | string | undefined | null): string {
+  if (val === undefined || val === null || val === '' || val === '-') return '-';
+
+  if (typeof val === 'number') {
+    const totalSecs = Math.max(0, Math.floor(val));
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  const str = String(val).trim();
+  if (!str || str === '-') return '-';
+
+  if (/^\d+h\s*\d+m\s*\d+s$/i.test(str) || /^\d+m\s*\d+s$/i.test(str)) {
+    return str;
+  }
+
+  if (str.includes(':')) {
+    const parts = str.split(':').map((p) => parseInt(p, 10));
+    if (parts.length === 3 && !parts.some(isNaN)) {
+      const [h, m, s] = parts;
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    } else if (parts.length === 2 && !parts.some(isNaN)) {
+      const [m, s] = parts;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+  }
+
+  const numMatch = str.match(/^(\d+)/);
+  if (numMatch) {
+    const totalSecs = parseInt(numMatch[1], 10);
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  return str;
+}
+
 import fs from 'fs';
+import child_process from 'child_process';
 
 function extractModelFromFilename(filename: string): string | undefined {
   const smMatch = filename.match(/\b(SM-[A-Za-z0-9]+)\b/i) || filename.match(/(SM-[A-Za-z0-9]+)/i);
@@ -154,10 +216,65 @@ const bridges = new Map<string, BridgeNode>();
 const devices = new Map<string, DeviceInfo>();
 const activeJobs = new Map<string, ActiveJob>();
 const jobHistory: ActiveJob[] = [];
+let serverWorkflows: LaundryWorkflowState[] = [];
+
+const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || '/run/media/endri-pro/BINARY_HDD/AUTO/workflows_state.json';
+const FALLBACK_WORKFLOWS_FILE = path.join(__dirname, '../workflows_state.json');
+
+function loadWorkflowsFromDisk(): void {
+  try {
+    const file = fs.existsSync(WORKFLOWS_FILE) ? WORKFLOWS_FILE : (fs.existsSync(FALLBACK_WORKFLOWS_FILE) ? FALLBACK_WORKFLOWS_FILE : null);
+    if (file) {
+      const data = fs.readFileSync(file, 'utf8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        serverWorkflows = parsed;
+        console.log(`[Hub] Loaded ${serverWorkflows.length} unified workflows from ${file}`);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('[Hub] Failed to load workflows state:', err);
+  }
+  if (serverWorkflows.length === 0) {
+    serverWorkflows = [{
+      id: 'wf-initial',
+      model: '',
+      selectedModules: [],
+      selectedSerials: [],
+      pda: ''
+    }];
+  }
+}
+
+function saveWorkflowsToDisk(wfs: LaundryWorkflowState[]): void {
+  try {
+    const targetFile = fs.existsSync(path.dirname(WORKFLOWS_FILE)) ? WORKFLOWS_FILE : FALLBACK_WORKFLOWS_FILE;
+    fs.writeFileSync(targetFile, JSON.stringify(wfs, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[Hub] Failed to save workflows state to disk:', err);
+  }
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// REST: Workflows State API
+app.get('/api/workflows', (_req, res) => {
+  res.json({ workflows: serverWorkflows });
+});
+
+app.post('/api/workflows', (req, res) => {
+  const { workflows } = req.body;
+  if (Array.isArray(workflows)) {
+    serverWorkflows = workflows;
+    saveWorkflowsToDisk(serverWorkflows);
+    broadcastFleetState();
+    return res.json({ success: true, count: serverWorkflows.length });
+  }
+  return res.status(400).json({ error: 'Expected array of workflows' });
+});
 
 // Serve static frontend files if built with no-cache headers for HTML
 const clientDist = path.join(__dirname, '../../client/dist');
@@ -189,53 +306,301 @@ app.get('/api/fleet/status', (_req, res) => {
 function parseRunBatchMetadata(batchName: string) {
   const model = extractModelFromFilename(batchName);
   let plan = 'Normal';
-  if (batchName.includes('_SMR_') || batchName.includes('SMR')) plan = 'SMR';
-  else if (batchName.includes('_SKU_') || batchName.includes('SKU')) plan = 'SKU';
-  else if (batchName.includes('STS')) plan = 'STS';
-  else if (batchName.includes('GTS')) plan = 'GTS';
+  let suite = 'Normal';
+  if (batchName.includes('_SMR_') || batchName.includes('SMR')) {
+    plan = 'SMR';
+    suite = 'SMR';
+  } else if (batchName.includes('_SKU_') || batchName.includes('SKU')) {
+    plan = 'SKU';
+    suite = 'SKU';
+  } else if (batchName.includes('STS')) {
+    plan = 'STS';
+    suite = 'STS';
+  } else if (batchName.includes('GTS')) {
+    plan = 'GTS';
+    suite = 'GTS';
+  }
 
   const devsMatch = batchName.match(/(\d+)devs/);
   const devsCount = devsMatch ? parseInt(devsMatch[1], 10) : 1;
 
-  return { model, plan, devsCount };
+  return { model, plan, suite, devsCount };
 }
 
-function scanBatchSummary(targetPath: string): { total: number; passed: number; failed: number } | undefined {
-  try {
-    if (fs.existsSync(targetPath)) {
-      if (fs.statSync(targetPath).isDirectory()) {
-        const findXml = (dir: string): string | null => {
-          const files = fs.readdirSync(dir);
-          for (const f of files) {
-            const full = path.join(dir, f);
-            if (f === 'test_result.xml') return full;
-            if (fs.statSync(full).isDirectory()) {
-              const nested = findXml(full);
-              if (nested) return nested;
-            }
+function parseSummaryFromLogContent(content: string): { total: number; passed: number; failed: number; run_time?: string; completed_time?: string } | undefined {
+  let passed = 0;
+  let failed = 0;
+  let total = 0;
+  let found = false;
+  let run_time: string | undefined;
+  let completed_time: string | undefined;
+
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const passMatch = trimmed.match(/^PASSED\s*:\s*(\d+)/i);
+    if (passMatch) {
+      passed = parseInt(passMatch[1], 10);
+      found = true;
+    }
+    const failMatch = trimmed.match(/^FAILED\s*:\s*(\d+)/i);
+    if (failMatch) {
+      failed = parseInt(failMatch[1], 10);
+      found = true;
+    }
+    const totMatch = trimmed.match(/^Total Tests\s*:\s*(\d+)/i);
+    if (totMatch) {
+      total = parseInt(totMatch[1], 10);
+      found = true;
+    }
+    const rtMatch = trimmed.match(/^Total Run time\s*:\s*([^\r\n]+)/i);
+    if (rtMatch) {
+      run_time = rtMatch[1].trim();
+    }
+    const timeMatch = trimmed.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+    if (timeMatch) {
+      completed_time = timeMatch[1].trim();
+    }
+  }
+
+  if (found) {
+    if (total === 0) total = passed + failed;
+    return { total, passed, failed, run_time, completed_time };
+  }
+  return undefined;
+}
+
+function scanSuiteSummary(subDir: string, suite: string): { total: number; passed: number; failed: number; run_time?: string; completed_time?: string } | undefined {
+  const dirs = [path.join(subDir, 'Log'), path.join(subDir, 'logs'), subDir];
+  const suiteLower = suite.toLowerCase();
+
+  for (const d of dirs) {
+    if (fs.existsSync(d) && fs.statSync(d).isDirectory()) {
+      try {
+        const files = fs.readdirSync(d);
+        // Pass 1: Prioritize retry log (e.g. laundry_retry_gts_1_1devs.log)
+        for (const f of files) {
+          const fl = f.toLowerCase();
+          if (fl.endsWith('.log') && fl.includes(`retry_${suiteLower}`)) {
+            const full = path.join(d, f);
+            const content = fs.readFileSync(full, 'utf8');
+            const parsed = parseSummaryFromLogContent(content);
+            if (parsed) return parsed;
           }
-          return null;
-        };
-        const xmlFile = findXml(targetPath);
-        if (xmlFile && fs.existsSync(xmlFile)) {
-          const content = fs.readFileSync(xmlFile, 'utf8');
-          const passMatch = content.match(/pass="(\d+)"/i) || content.match(/passed="(\d+)"/i);
-          const failMatch = content.match(/failed="(\d+)"/i) || content.match(/fail="(\d+)"/i);
-          const totalMatch = content.match(/total="(\d+)"/i) || content.match(/tests="(\d+)"/i);
-          if (passMatch || failMatch) {
-            const passed = passMatch ? parseInt(passMatch[1], 10) : 0;
-            const failed = failMatch ? parseInt(failMatch[1], 10) : 0;
-            const total = totalMatch ? parseInt(totalMatch[1], 10) : (passed + failed);
-            return { total, passed, failed };
+        }
+        // Pass 2: Fallback to any log matching suite
+        for (const f of files) {
+          const fl = f.toLowerCase();
+          if (fl.endsWith('.log') && fl.includes(`_${suiteLower}_`)) {
+            const full = path.join(d, f);
+            const content = fs.readFileSync(full, 'utf8');
+            const parsed = parseSummaryFromLogContent(content);
+            if (parsed) return parsed;
+          }
+        }
+      } catch (_) {}
+    }
+  }
+  return undefined;
+}
+
+function scanBatchSummary(targetPath: string): { total: number; passed: number; failed: number; run_time?: string } | undefined {
+  try {
+    let dirPath = targetPath;
+    if (!fs.existsSync(dirPath)) {
+      if (dirPath.endsWith('.zip')) {
+        const withoutZip = dirPath.replace(/\.zip$/i, '');
+        if (fs.existsSync(withoutZip)) dirPath = withoutZip;
+      }
+    } else if (fs.statSync(dirPath).isFile() && dirPath.endsWith('.zip')) {
+      const withoutZip = dirPath.replace(/\.zip$/i, '');
+      if (fs.existsSync(withoutZip) && fs.statSync(withoutZip).isDirectory()) {
+        dirPath = withoutZip;
+      }
+    }
+
+    let aggPassed = 0;
+    let aggFailed = 0;
+    let aggTotal = 0;
+    let foundAny = false;
+    const processedLogs = new Set<string>();
+
+    if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+      const logDirs = [path.join(dirPath, 'Log'), path.join(dirPath, 'logs'), dirPath];
+
+      for (const ld of logDirs) {
+        if (fs.existsSync(ld) && fs.statSync(ld).isDirectory()) {
+          const files = fs.readdirSync(ld);
+          for (const f of files) {
+            const fl = f.toLowerCase();
+            if (fl.endsWith('.log') && !fl.includes('tradefed_global') && !fl.includes('invoc_complete') && !fl.includes('host_log')) {
+              if (processedLogs.has(f)) continue;
+              processedLogs.add(f);
+              try {
+                const content = fs.readFileSync(path.join(ld, f), 'utf8');
+                const parsed = parseSummaryFromLogContent(content);
+                if (parsed && (parsed.passed > 0 || parsed.failed > 0 || parsed.total > 0)) {
+                  aggPassed += parsed.passed;
+                  aggFailed += parsed.failed;
+                  aggTotal += parsed.total;
+                  foundAny = true;
+                }
+              } catch (_) {}
+            }
           }
         }
       }
+    } else if (fs.existsSync(targetPath) && targetPath.endsWith('.zip')) {
+      // Direct ZIP reading via unzip -l and unzip -p
+      try {
+        const listOutput = child_process.execSync(`unzip -l "${targetPath}"`, { encoding: 'utf8', timeout: 3000 });
+        const logMatches = listOutput.match(/[^\s]+\.log/g) || [];
+        for (const logFile of logMatches) {
+          if (!processedLogs.has(logFile) && !logFile.includes('tradefed_global') && !logFile.includes('invoc_complete') && !logFile.includes('host_log')) {
+            processedLogs.add(logFile);
+            try {
+              const content = child_process.execSync(`unzip -p "${targetPath}" "${logFile}"`, { encoding: 'utf8', timeout: 3000 });
+              const parsed = parseSummaryFromLogContent(content);
+              if (parsed && (parsed.passed > 0 || parsed.failed > 0 || parsed.total > 0)) {
+                aggPassed += parsed.passed;
+                aggFailed += parsed.failed;
+                aggTotal += parsed.total;
+                foundAny = true;
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (foundAny) {
+      if (aggTotal === 0) aggTotal = aggPassed + aggFailed;
+      return { total: aggTotal, passed: aggPassed, failed: aggFailed };
     }
   } catch (_) {}
   return undefined;
 }
 
-// REST: Result ZIP List Endpoint (Grouped by Overall Run Batch)
+function enrichJobSummary(job: ActiveJob): void {
+  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  try {
+    if (!fs.existsSync(resultsDir)) return;
+
+    // Check if summary is missing or dummy (total <= 1)
+    const isDummy = !job.summary || (job.summary.total <= 1 && job.summary.passed <= 1);
+    if (!isDummy) return;
+
+    const zipFile = job.zip_file || (job.zip_files && job.zip_files[0]);
+    let targetDir: string | undefined;
+
+    if (zipFile) {
+      const base = path.basename(zipFile).replace(/\.zip$/i, '');
+      const direct = path.join(resultsDir, base);
+      if (fs.existsSync(direct) && fs.statSync(direct).isDirectory()) {
+        targetDir = direct;
+      }
+    }
+
+    if (!targetDir) {
+      const entries = fs.readdirSync(resultsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const matchRunId = job.run_id && (entry.name.includes(job.run_id) || job.run_id.includes(entry.name));
+          const matchZip = zipFile && (zipFile.includes(entry.name) || entry.name.includes(path.basename(zipFile, '.zip')));
+          if (matchRunId || matchZip) {
+            targetDir = path.join(resultsDir, entry.name);
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetDir) {
+      const diskSummary = scanBatchSummary(targetDir);
+      if (diskSummary && (diskSummary.total > 0 || diskSummary.passed > 0 || diskSummary.failed > 0)) {
+        job.summary = {
+          run_id: job.run_id,
+          test_type: job.test_type,
+          suite: job.suite,
+          devices: Array.isArray(job.devices) ? job.devices.join(', ') : (job.devices || ''),
+          run_time: formatDurationHms(diskSummary.run_time || job.summary?.run_time || job.elapsed_secs),
+          modules: job.summary?.modules || '',
+          total: diskSummary.total,
+          passed: diskSummary.passed,
+          failed: diskSummary.failed,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[Hub] enrichJobSummary error:', err);
+  }
+}
+
+function initJobHistoryFromDisk(): void {
+  const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
+  try {
+    if (!fs.existsSync(resultsDir)) return;
+    const entries = fs.readdirSync(resultsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && (entry.name.startsWith('Laundry_') || entry.name.includes('_run-'))) {
+        const fullDir = path.join(resultsDir, entry.name);
+        const meta = parseRunBatchMetadata(entry.name);
+        const summary = scanBatchSummary(fullDir);
+        const zStat = fs.statSync(fullDir);
+        const zipFile = path.join(resultsDir, `${entry.name}.zip`);
+        const hasZip = fs.existsSync(zipFile);
+
+        const runIdMatch = entry.name.match(/run-([0-9]+)/) || entry.name.match(/_([0-9]{10})_/);
+        const runId = runIdMatch ? runIdMatch[1] : entry.name;
+
+        if (jobHistory.some(j => j.run_id === runId || (j.zip_file && j.zip_file.includes(entry.name)))) {
+          continue;
+        }
+
+        let devSerials: string[] = [];
+        try {
+          const files = fs.readdirSync(fullDir);
+          for (const f of files) {
+            const dMatch = f.match(/DeviceInfo_([A-Za-z0-9]+)_/);
+            if (dMatch && !devSerials.includes(dMatch[1])) devSerials.push(dMatch[1]);
+            const zMatch = f.match(/(?:CTS|GTS|STS|VTS)_retry\d+_[^_]+_[^_]+_([A-Za-z0-9]+)_/i);
+            if (zMatch && !devSerials.includes(zMatch[1])) devSerials.push(zMatch[1]);
+          }
+        } catch (_) {}
+
+        jobHistory.push({
+          run_id: runId,
+          pcId: 'Endri Ubuntu',
+          test_type: meta.plan || 'SMR',
+          status: 'Finished',
+          suite: meta.suite || meta.plan || 'SMR',
+          startedAt: zStat.birthtimeMs || zStat.mtimeMs,
+          devices: devSerials.length > 0 ? devSerials : (meta.model ? [meta.model] : []),
+          elapsed_secs: summary?.run_time ? parseInt(summary.run_time, 10) || 600 : 600,
+          summary: summary ? {
+            run_id: runId,
+            test_type: meta.plan || 'SMR',
+            suite: meta.suite || meta.plan || 'SMR',
+            devices: devSerials.join(', ') || meta.model || '',
+            run_time: formatDurationHms(summary.run_time || 600),
+            modules: '',
+            total: summary.total,
+            passed: summary.passed,
+            failed: summary.failed,
+          } : undefined,
+          zip_file: hasZip ? zipFile : `${fullDir}.zip`,
+          zip_files: hasZip ? [zipFile] : [`${fullDir}.zip`],
+          recentLogs: []
+        });
+      }
+    }
+    jobHistory.sort((a, b) => b.startedAt - a.startedAt);
+  } catch (err) {
+    console.error('[Hub] initJobHistoryFromDisk error:', err);
+  }
+}
+
+// REST: Result ZIP List Endpoint (Individual Suite ZIPs & Grouped Master Batches)
 app.get('/api/results/list', (_req, res) => {
   const resultsDir = '/run/media/endri-pro/BINARY_HDD/AUTO/Results';
   const zips: Array<{
@@ -245,10 +610,14 @@ app.get('/api/results/list', (_req, res) => {
     modifiedAt: number;
     model?: string;
     plan?: string;
+    suite?: string;
+    test_type?: string;
     devsCount?: number;
     run_batch: string;
     subFilesCount?: number;
-    summary?: { total: number; passed: number; failed: number };
+    isIndividualSuite?: boolean;
+    isMasterBatch?: boolean;
+    summary?: { total: number; passed: number; failed: number; run_time?: string; completed_time?: string };
   }> = [];
 
   try {
@@ -267,30 +636,57 @@ app.get('/api/results/list', (_req, res) => {
           let sizeBytes = 0;
           let modifiedAt = 0;
           let subFilesCount = 0;
+          const meta = parseRunBatchMetadata(batchName);
+
+          try {
+            const subFiles = fs.readdirSync(subDir);
+            subFilesCount = subFiles.length;
+            const dStat = fs.statSync(subDir);
+            modifiedAt = dStat.mtimeMs;
+
+            for (const f of subFiles) {
+              const fullFPath = path.join(subDir, f);
+              try {
+                const fStat = fs.statSync(fullFPath);
+                sizeBytes += fStat.size;
+                if (fStat.mtimeMs > modifiedAt) modifiedAt = fStat.mtimeMs;
+
+                // 1. Scan and add individual suite ZIP files directly!
+                if (f.toLowerCase().endsWith('.zip') && !f.startsWith('Laundry_')) {
+                  let suite = 'CTS';
+                  const fUp = f.toUpperCase();
+                  if (fUp.startsWith('GTS') || fUp.includes('_GTS_')) suite = 'GTS';
+                  else if (fUp.startsWith('STS') || fUp.includes('_STS_')) suite = 'STS';
+                  else if (fUp.startsWith('CTS') || fUp.includes('_CTS_')) suite = 'CTS';
+
+                  const suiteSummary = scanSuiteSummary(subDir, suite);
+                  zips.push({
+                    filename: f,
+                    path: fullFPath,
+                    sizeBytes: fStat.size,
+                    modifiedAt: fStat.mtimeMs,
+                    model: extractModelFromFilename(f) || meta.model,
+                    plan: meta.plan,
+                    suite,
+                    test_type: `${meta.plan} / ${suite}`,
+                    devsCount: meta.devsCount,
+                    run_batch: batchName,
+                    isIndividualSuite: true,
+                    summary: suiteSummary || { total: 0, passed: 0, failed: 0 }
+                  });
+                }
+              } catch (_) {}
+            }
+          } catch (_) {}
 
           if (fs.existsSync(zipCandidate) && fs.statSync(zipCandidate).isFile()) {
             const zStat = fs.statSync(zipCandidate);
             sizeBytes = zStat.size;
-            modifiedAt = zStat.mtimeMs;
-          } else {
-            try {
-              const subFiles = fs.readdirSync(subDir);
-              subFilesCount = subFiles.length;
-              const dStat = fs.statSync(subDir);
-              modifiedAt = dStat.mtimeMs;
-              for (const f of subFiles) {
-                try {
-                  const fStat = fs.statSync(path.join(subDir, f));
-                  sizeBytes += fStat.size;
-                  if (fStat.mtimeMs > modifiedAt) modifiedAt = fStat.mtimeMs;
-                } catch (_) {}
-              }
-            } catch (_) {}
+            if (zStat.mtimeMs > modifiedAt) modifiedAt = zStat.mtimeMs;
           }
 
-          const meta = parseRunBatchMetadata(batchName);
           const effectivePath = fs.existsSync(zipCandidate) ? zipCandidate : subDir;
-          const summary = scanBatchSummary(subDir);
+          const batchSummary = scanBatchSummary(subDir);
           zips.push({
             filename: `${batchName}.zip`,
             path: effectivePath,
@@ -298,10 +694,13 @@ app.get('/api/results/list', (_req, res) => {
             modifiedAt,
             model: meta.model,
             plan: meta.plan,
+            suite: meta.plan,
+            test_type: meta.plan,
             devsCount: meta.devsCount,
             run_batch: batchName,
             subFilesCount,
-            summary
+            isMasterBatch: true,
+            summary: batchSummary
           });
         } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.zip')) {
           const baseName = entry.name.replace(/\.zip$/i, '');
@@ -311,7 +710,7 @@ app.get('/api/results/list', (_req, res) => {
             const stat = fs.statSync(fullPath);
             const meta = parseRunBatchMetadata(entry.name);
             const matchingDir = path.join(resultsDir, baseName);
-            const summary = fs.existsSync(matchingDir) ? scanBatchSummary(matchingDir) : undefined;
+            const summary = fs.existsSync(matchingDir) ? scanBatchSummary(matchingDir) : scanBatchSummary(fullPath);
             zips.push({
               filename: entry.name,
               path: fullPath,
@@ -319,8 +718,11 @@ app.get('/api/results/list', (_req, res) => {
               modifiedAt: stat.mtimeMs,
               model: meta.model,
               plan: meta.plan,
+              suite: meta.plan,
+              test_type: meta.plan,
               devsCount: meta.devsCount,
               run_batch: baseName,
+              isMasterBatch: true,
               summary
             });
           }
@@ -428,6 +830,12 @@ server.on('upgrade', (request, socket, head) => {
 
 // Broadcast full fleet state to all connected Web UI clients
 function broadcastFleetState() {
+  for (const job of jobHistory) {
+    enrichJobSummary(job);
+  }
+  for (const job of activeJobs.values()) {
+    enrichJobSummary(job);
+  }
   const localZips = scanLocalCucianZips();
 
   const bridgeList = Array.from(bridges.values()).map(b => {
@@ -461,7 +869,8 @@ function broadcastFleetState() {
     bridges: bridgeList,
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
-    jobHistory: jobHistory.slice(-50)
+    jobHistory: jobHistory.slice(-50),
+    workflows: serverWorkflows
   });
 
   for (const client of wssUi.clients) {
@@ -631,6 +1040,7 @@ wssBridge.on('connection', (ws, req) => {
               job.zip_files = zip_files;
             }
             job.zip_file = zip_file || (job.zip_files && job.zip_files[0]);
+            enrichJobSummary(job);
             const existingIdx = jobHistory.findIndex(j => j.run_id === run_id);
             if (existingIdx >= 0) {
               jobHistory[existingIdx] = { ...job, recentLogs: [...job.recentLogs] };
@@ -679,6 +1089,9 @@ wssBridge.on('connection', (ws, req) => {
 
 // Handle Web UI Connections
 wssUi.on('connection', (ws) => {
+  for (const job of jobHistory) {
+    enrichJobSummary(job);
+  }
   // Send immediate fleet snapshot on connect
   ws.send(JSON.stringify({
     type: 'FLEET_STATE',
@@ -693,7 +1106,8 @@ wssUi.on('connection', (ws) => {
     })),
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
-    jobHistory: jobHistory.slice(-50)
+    jobHistory: jobHistory.slice(-50),
+    workflows: serverWorkflows
   }));
 
   ws.on('message', (raw) => {
@@ -715,9 +1129,9 @@ wssUi.on('connection', (ws) => {
               job = {
                 run_id,
                 pcId: targetPcId,
-                test_type: payload.test_type || 'Laundry',
+                test_type: payload.test_type ? payload.test_type.replace(/^Laundry\s+/i, '') : 'SMR',
                 status: 'Starting',
-                suite: payload.test_type || 'Laundry',
+                suite: payload.test_type ? payload.test_type.replace(/^Laundry\s+/i, '') : 'SMR',
                 startedAt: Date.now(),
                 devices: targetDevs,
                 elapsed_secs: 0,
@@ -815,6 +1229,15 @@ wssUi.on('connection', (ws) => {
           break;
         }
 
+        case 'SYNC_WORKFLOWS': {
+          if (Array.isArray(msg.workflows)) {
+            serverWorkflows = msg.workflows;
+            saveWorkflowsToDisk(serverWorkflows);
+            broadcastFleetState();
+          }
+          break;
+        }
+
         default:
           break;
       }
@@ -823,6 +1246,29 @@ wssUi.on('connection', (ws) => {
     }
   });
 });
+
+// Realtime 1-second server ticker for active runs
+setInterval(() => {
+  if (activeJobs.size > 0) {
+    const now = Date.now();
+    let hasRunning = false;
+    for (const job of activeJobs.values()) {
+      if (job.status === 'Running' || job.status === 'Starting') {
+        const currentElapsed = Math.max(0, Math.floor((now - (job.startedAt || now)) / 1000));
+        if (job.elapsed_secs !== currentElapsed) {
+          job.elapsed_secs = currentElapsed;
+          hasRunning = true;
+        }
+      }
+    }
+    if (hasRunning) {
+      broadcastFleetState();
+    }
+  }
+}, 1000);
+
+loadWorkflowsFromDisk();
+initJobHistoryFromDisk();
 
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {

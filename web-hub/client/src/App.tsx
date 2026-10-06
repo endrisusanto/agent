@@ -20,6 +20,8 @@ export const App: React.FC = () => {
     devices,
     activeJobs,
     jobHistory,
+    workflows: serverWorkflows,
+    syncWorkflows,
     laundryAnalysis,
     runSuite,
     cancelRun,
@@ -48,7 +50,7 @@ export const App: React.FC = () => {
     return bridges.flatMap((b) => b.laundryZips || []);
   }, [bridges]);
 
-  // Manage multiple laundry workflows (persisted to localStorage)
+  // Manage multiple laundry workflows (unified on server + synced across all devices)
   const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>(() => {
     const saved = localStorage.getItem('gba_laundry_workflows');
     if (saved) {
@@ -72,6 +74,14 @@ export const App: React.FC = () => {
     ];
   });
 
+  // When server broadcasts unified workflows, update local state
+  useEffect(() => {
+    if (serverWorkflows && serverWorkflows.length > 0) {
+      setWorkflows(serverWorkflows);
+      localStorage.setItem('gba_laundry_workflows', JSON.stringify(serverWorkflows));
+    }
+  }, [serverWorkflows]);
+
   // Persist workflows
   useEffect(() => {
     localStorage.setItem('gba_laundry_workflows', JSON.stringify(workflows));
@@ -88,11 +98,15 @@ export const App: React.FC = () => {
 
   // Workflow Handlers
   const handleUpdateWorkflow = (updated: LaundryWorkflowState) => {
-    setWorkflows((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
+    const next = workflows.map((w) => (w.id === updated.id ? updated : w));
+    setWorkflows(next);
+    syncWorkflows(next);
   };
 
   const handleRemoveWorkflow = (id: string) => {
-    setWorkflows((prev) => prev.filter((w) => w.id !== id));
+    const next = workflows.filter((w) => w.id !== id);
+    setWorkflows(next);
+    syncWorkflows(next);
   };
 
   const handleAddWorkflow = () => {
@@ -103,7 +117,9 @@ export const App: React.FC = () => {
       selectedModules: [],
       selectedSerials: [],
     };
-    setWorkflows((prev) => [...prev, newWorkflow]);
+    const next = [...workflows, newWorkflow];
+    setWorkflows(next);
+    syncWorkflows(next);
   };
 
   const handleOpenLaundryPicker = (workflowId: string, pcId?: string) => {
@@ -178,15 +194,14 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-container">
+      <FleetHeader
+        onlineBridgesCount={bridges.length}
+        devicesCount={devices.length}
+        activeJobsCount={activeJobs.length}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
       <main className="main-content">
-        <FleetHeader
-          onlineBridgesCount={bridges.length}
-          devicesCount={devices.length}
-          activeJobsCount={activeJobs.length}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
-
         {/* Standalone Filter Toolbar Card at Top */}
         <FilterToolbarCard
           searchQuery={searchQuery}
