@@ -83,7 +83,7 @@ AUTO/
 
 | Desktop View | Mobile View |
 | :---: | :---: |
-| ![Desktop View](docs/Desktop.png) | ![Mobile View](docs/Mobile.png) |
+| ![Desktop View](docs/Desktop_NEW.png) | ![Mobile View](docs/Mobile_NEW.png) |
 
 ---
 
