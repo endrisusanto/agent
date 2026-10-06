@@ -1,6 +1,6 @@
 {
   "name": "agentic-auto-fleet",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Distributed Android Test Suite Automation (CTS/GTS/STS/Cuci SMR) Fleet Hub & Bridge System",
   "workspaces": [
