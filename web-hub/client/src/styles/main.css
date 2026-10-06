@@ -1630,19 +1630,23 @@ body {
 .laundry-path-display {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  max-width: 100%;
+  gap: 0.35rem;
   min-width: 0;
-  overflow: hidden;
+  flex: 1 1 auto;
 }
 
+.laundry-path-label {
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.laundry-path-code,
 .laundry-path-display code {
   font-family: var(--font-mono);
   color: var(--text-primary);
-  margin-left: 0.25rem;
-  max-width: 340px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-left: 0.15rem;
   white-space: nowrap;
   display: inline-block;
   vertical-align: middle;
@@ -2214,8 +2218,34 @@ button.btn-running:disabled svg {
   }
 
   .laundry-path-display {
-    word-break: break-all;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    word-break: normal;
+  }
+
+  .laundry-path-label {
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-size: 0.75rem;
+  }
+
+  .laundry-path-code,
+  .laundry-path-display code {
     font-size: 0.72rem;
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    flex: 1;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    padding-bottom: 2px;
   }
 
   .laundry-stats-chips {

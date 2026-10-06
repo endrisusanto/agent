@@ -245,7 +245,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
   const planName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
   const apVersion = workflow.ap_version || workflow.pda || (matchingDevices[0]?.pda ?? '');
-  const isLoaded = Boolean(workflow.selectedZip || workflow.model || workflow.ap_version);
+  const isLoaded = Boolean(workflow.selectedZip);
   const titleText = isLoaded
     ? `Laundry ${planName}`
     : 'Pilih Zip Test';
@@ -427,24 +427,26 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
         <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
           {isLoaded && (
-            <button
-              className={`btn ${isWorkflowRunning ? 'btn-running' : 'btn-suite-primary'} btn-action-full`}
-              title={isWorkflowRunning ? 'Automasi sedang berlangsung' : 'Jalankan Cuci SMR untuk modul terpilih'}
-              onClick={handleRunLaundryAutomation}
-              disabled={workflow.selectedSerials.length === 0 || isWorkflowRunning}
-            >
-              <PlayIcon size={13} />
-              <span>{isWorkflowRunning ? 'Sedang Berjalan...' : 'Jalankan Automasi'}</span>
-            </button>
+            <>
+              <button
+                className={`btn ${isWorkflowRunning ? 'btn-running' : 'btn-suite-primary'} btn-action-full`}
+                title={isWorkflowRunning ? 'Automasi sedang berlangsung' : 'Jalankan Cuci SMR untuk modul terpilih'}
+                onClick={handleRunLaundryAutomation}
+                disabled={workflow.selectedSerials.length === 0 || isWorkflowRunning}
+              >
+                <PlayIcon size={13} />
+                <span>{isWorkflowRunning ? 'Sedang Berjalan...' : 'Jalankan Automasi'}</span>
+              </button>
+              <button
+                className="btn-icon-danger"
+                title="Hapus Laundry Workflow"
+                onClick={() => onRemoveWorkflow(workflow.id)}
+                aria-label="Remove workflow"
+              >
+                <TrashIcon size={15} />
+              </button>
+            </>
           )}
-          <button
-            className="btn-icon-danger"
-            title="Hapus Laundry Workflow"
-            onClick={() => onRemoveWorkflow(workflow.id)}
-            aria-label="Remove workflow"
-          >
-            <TrashIcon size={15} />
-          </button>
         </div>
       </div>
 
@@ -496,7 +498,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                   <div>
                     <div className="laundry-summary-bar">
                       <div className="laundry-path-display" title={workflow.selectedZip}>
-                        <strong>Zip:</strong> <code>{workflow.selectedZip.split('/').pop() || workflow.selectedZip}</code>
+                        <strong className="laundry-path-label">Zip:</strong>{' '}
+                        <code className="laundry-path-code">{workflow.selectedZip.split('/').pop() || workflow.selectedZip}</code>
                       </div>
                       <div className="laundry-stats-chips">
                         <div className="laundry-chips-group">
