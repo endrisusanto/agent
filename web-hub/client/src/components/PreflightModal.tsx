@@ -18,11 +18,23 @@ interface PreflightModalProps {
   preflightReports: PreflightReport[];
   bridges: BridgeInfo[];
   onTriggerScan: (pcId?: string) => void;
+  onStartSync?: (sourceNode: string, targetNode: string, resourceName: string) => void;
 }
 
-interface FlattenedPreflightItem extends PreflightItem {
-  pcId: string;
-  autoRoot: string;
+interface MatrixPreflightRow {
+  key: string;
+  category: string;
+  item: string;
+  path: string;
+  details: string;
+  zip_available: boolean;
+  can_sync: boolean;
+  nodeStatuses: Record<string, {
+    status: 'OK' | 'MISSING' | 'WARN';
+    details?: string;
+    can_sync?: boolean;
+    path?: string;
+  }>;
 }
 
 export const PreflightModal: React.FC<PreflightModalProps> = ({
@@ -31,6 +43,7 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
   preflightReports,
   bridges,
   onTriggerScan,
+  onStartSync,
 }) => {
   const [selectedNodeFilter, setSelectedNodeFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -55,62 +68,102 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
     return Array.from(set).filter(Boolean);
   }, [preflightReports, bridges]);
 
-  // Flatten items with node info
-  const allItems: FlattenedPreflightItem[] = useMemo(() => {
-    const list: FlattenedPreflightItem[] = [];
+  // Build matrix rows indexed by category + item
+  const matrixRows = useMemo(() => {
+    const rowMap = new Map<string, MatrixPreflightRow>();
+
     preflightReports.forEach((rep) => {
       rep.items.forEach((item) => {
-        list.push({
-          ...item,
-          pcId: rep.pc_id,
-          autoRoot: rep.auto_root,
-        });
+        const key = `${item.category}::${item.item}`;
+        if (!rowMap.has(key)) {
+          rowMap.set(key, {
+            key,
+            category: item.category,
+            item: item.item,
+            path: item.path,
+            details: item.details || '',
+            zip_available: item.zip_available,
+            can_sync: item.can_sync,
+            nodeStatuses: {},
+          });
+        }
+        const row = rowMap.get(key)!;
+        row.nodeStatuses[rep.pc_id] = {
+          status: item.status as 'OK' | 'MISSING' | 'WARN',
+          details: item.details,
+          can_sync: item.can_sync,
+          path: item.path,
+        };
+        if (item.zip_available) row.zip_available = true;
+        if (item.can_sync) row.can_sync = true;
       });
     });
-    return list;
+
+    return Array.from(rowMap.values());
   }, [preflightReports]);
 
-  // Filter items based on selected node, search query, and status
-  const filteredItems = useMemo(() => {
-    return allItems.filter((item) => {
-      if (selectedNodeFilter !== 'ALL' && item.pcId !== selectedNodeFilter) {
-        return false;
+  // Filter matrix rows based on selected node, search query, and status
+  const filteredRows = useMemo(() => {
+    return matrixRows.filter((row) => {
+      // Node filter
+      if (selectedNodeFilter !== 'ALL') {
+        const nodeStatus = row.nodeStatuses[selectedNodeFilter];
+        if (!nodeStatus) return false;
+        if (statusFilter === 'ISSUES' && nodeStatus.status === 'OK') return false;
+        if (statusFilter === 'OK' && nodeStatus.status !== 'OK') return false;
+      } else {
+        // Across all nodes
+        const statuses = Object.values(row.nodeStatuses).map((s) => s.status);
+        const hasIssue = statuses.some((s) => s === 'MISSING' || s === 'WARN');
+        const allOk = statuses.length > 0 && statuses.every((s) => s === 'OK');
+        if (statusFilter === 'ISSUES' && !hasIssue) return false;
+        if (statusFilter === 'OK' && !allOk) return false;
       }
-      if (statusFilter === 'ISSUES' && item.status === 'OK') {
-        return false;
-      }
-      if (statusFilter === 'OK' && item.status !== 'OK') {
-        return false;
-      }
+
+      // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchesCategory = item.category.toLowerCase().includes(q);
-        const matchesItem = item.item.toLowerCase().includes(q);
-        const matchesPath = item.path.toLowerCase().includes(q);
-        const matchesDetails = (item.details || '').toLowerCase().includes(q);
-        const matchesPcId = item.pcId.toLowerCase().includes(q);
-        return matchesCategory || matchesItem || matchesPath || matchesDetails || matchesPcId;
+        const matchCat = row.category.toLowerCase().includes(q);
+        const matchItem = row.item.toLowerCase().includes(q);
+        const matchPath = row.path.toLowerCase().includes(q);
+        const matchDetails = row.details.toLowerCase().includes(q);
+        return matchCat || matchItem || matchPath || matchDetails;
       }
+
       return true;
     });
-  }, [allItems, selectedNodeFilter, searchQuery, statusFilter]);
+  }, [matrixRows, selectedNodeFilter, searchQuery, statusFilter]);
 
   // Summary counts
   const stats = useMemo(() => {
-    const targetItems = selectedNodeFilter === 'ALL'
-      ? allItems
-      : allItems.filter((i) => i.pcId === selectedNodeFilter);
-    const okCount = targetItems.filter((i) => i.status === 'OK').length;
-    const warnCount = targetItems.filter((i) => i.status === 'WARN').length;
-    const missingCount = targetItems.filter((i) => i.status === 'MISSING').length;
+    let total = 0;
+    let ok = 0;
+    let warn = 0;
+    let missing = 0;
+
+    matrixRows.forEach((row) => {
+      total++;
+      if (selectedNodeFilter === 'ALL') {
+        const statuses = Object.values(row.nodeStatuses).map((s) => s.status);
+        if (statuses.every((s) => s === 'OK')) ok++;
+        else if (statuses.some((s) => s === 'MISSING')) missing++;
+        else warn++;
+      } else {
+        const s = row.nodeStatuses[selectedNodeFilter]?.status;
+        if (s === 'OK') ok++;
+        else if (s === 'MISSING') missing++;
+        else if (s === 'WARN') warn++;
+      }
+    });
+
     return {
-      total: targetItems.length,
-      ok: okCount,
-      warn: warnCount,
-      missing: missingCount,
-      issues: warnCount + missingCount,
+      total,
+      ok,
+      warn,
+      missing,
+      issues: warn + missing,
     };
-  }, [allItems, selectedNodeFilter]);
+  }, [matrixRows, selectedNodeFilter]);
 
   if (!isOpen) return null;
 
@@ -120,7 +173,21 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
     setTimeout(() => setIsScanning(false), 1200);
   };
 
-  const currentReport = preflightReports.find((r) => r.pc_id === selectedNodeFilter) || preflightReports[0];
+  const handleSyncNodeTool = (targetNode: string, row: MatrixPreflightRow) => {
+    // Find donor node that has this tool OK
+    const donorNode =
+      availableNodes.find(
+        (n) => n !== targetNode && row.nodeStatuses[n]?.status === 'OK'
+      ) || 'Endri';
+
+    if (onStartSync) {
+      onStartSync(donorNode, targetNode, row.item);
+    }
+  };
+
+  const currentReport =
+    preflightReports.find((r) => r.pc_id === selectedNodeFilter) ||
+    preflightReports[0];
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
@@ -199,7 +266,7 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
               <div className="preflight-path-box">
                 <span className="preflight-path-label">AUTO Root:</span>
                 <code className="preflight-path-val">
-                  {currentReport?.auto_root || '/run/media/endri-pro/BINARY_HDD/AUTO'}
+                  {currentReport?.auto_root || '/auto'}
                 </code>
               </div>
             </div>
@@ -253,7 +320,7 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
                 className={`filter-pill ${statusFilter === 'ALL' ? 'active' : ''}`}
                 onClick={() => setStatusFilter('ALL')}
               >
-                Semua ({allItems.length})
+                Semua ({matrixRows.length})
               </button>
               <button
                 type="button"
@@ -272,7 +339,7 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
             </div>
           </div>
 
-          {/* Preflight Data Table */}
+          {/* Preflight Data Table (Matrix matching image with Node columns) */}
           <div className="table-responsive preflight-table-container">
             <table className="data-table preflight-table">
               <thead>
@@ -281,30 +348,43 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
                   <th style={{ width: '100px' }}>CATEGORY</th>
                   <th>RESOURCE & PATH</th>
                   <th>DETAIL & ZIP STATUS</th>
-                  <th style={{ width: '180px', minWidth: '160px', textAlign: 'center', whiteSpace: 'nowrap' }}>NODE</th>
-                  <th style={{ width: '120px', textAlign: 'center' }}>ACTION</th>
+                  {availableNodes.map((nodeId) => (
+                    <th
+                      key={nodeId}
+                      style={{
+                        minWidth: '120px',
+                        textAlign: 'center',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {nodeId}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredItems.length > 0 ? (
-                  filteredItems.map((item, idx) => {
-                    const isOk = item.status === 'OK';
-                    const isWarn = item.status === 'WARN';
-                    const isMissing = item.status === 'MISSING';
+                {filteredRows.length > 0 ? (
+                  filteredRows.map((row) => {
+                    const statuses = Object.values(row.nodeStatuses).map((s) => s.status);
+                    const allOk = statuses.length > 0 && statuses.every((s) => s === 'OK');
+                    const hasMissing = statuses.some((s) => s === 'MISSING');
+                    const hasWarn = statuses.some((s) => s === 'WARN');
 
                     return (
                       <tr
-                        key={`${item.pcId}-${item.category}-${item.item}-${idx}`}
-                        className={`preflight-row ${isMissing ? 'row-missing' : isWarn ? 'row-warn' : ''}`}
+                        key={row.key}
+                        className={`preflight-row ${
+                          hasMissing ? 'row-missing' : hasWarn ? 'row-warn' : ''
+                        }`}
                       >
-                        {/* Status Icon */}
+                        {/* Overall Status Icon */}
                         <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                          {isOk ? (
+                          {allOk ? (
                             <CheckCircleIcon size={18} />
-                          ) : isWarn ? (
-                            <AlertCircleIcon size={18} />
-                          ) : (
+                          ) : hasMissing ? (
                             <XCircleIcon size={18} />
+                          ) : (
+                            <AlertCircleIcon size={18} />
                           )}
                         </td>
 
@@ -312,83 +392,90 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
                         <td style={{ verticalAlign: 'middle' }}>
                           <span
                             className={`badge badge-xs ${
-                              item.category === 'CTS'
+                              row.category === 'CTS'
                                 ? 'badge-pc'
-                                : item.category === 'GTS'
+                                : row.category === 'GTS'
                                 ? 'badge-unit'
-                                : item.category === 'STS'
+                                : row.category === 'STS'
                                 ? 'badge-running'
                                 : 'badge-neutral'
                             }`}
                             style={{ fontWeight: 600 }}
                           >
-                            {item.category}
+                            {row.category}
                           </span>
                         </td>
 
                         {/* Resource & Path */}
                         <td style={{ verticalAlign: 'middle' }}>
                           <div className="preflight-item-title font-medium">
-                            {item.item}
+                            {row.item}
                           </div>
-                          <div className="preflight-item-sub mono" title={item.path}>
-                            {item.path}
+                          <div className="preflight-item-sub mono" title={row.path}>
+                            {row.path}
                           </div>
                         </td>
 
                         {/* Details & Zip Status */}
                         <td style={{ verticalAlign: 'middle' }}>
                           <div className="preflight-item-details">
-                            {item.details || '-'}
+                            {row.details || '-'}
                           </div>
-                          {item.zip_available && (
-                            <span className="badge badge-pass badge-xs" style={{ marginTop: '0.2rem', display: 'inline-block' }}>
+                          {row.zip_available && (
+                            <span
+                              className="badge badge-pass badge-xs"
+                              style={{ marginTop: '0.2rem', display: 'inline-block' }}
+                            >
                               📦 Zip Available
                             </span>
                           )}
                         </td>
 
-                        {/* Node Badge (Right Column - Memanjang ke kanan) */}
-                        <td style={{ textAlign: 'center', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
-                          <span
-                            className="badge badge-pc badge-xs mono-cell"
-                            style={{
-                              whiteSpace: 'nowrap',
-                              display: 'inline-block',
-                              padding: '0.28rem 0.75rem',
-                              fontSize: '0.75rem',
-                              letterSpacing: '0.02em',
-                            }}
-                            title={`Workstation Node: ${item.pcId}`}
-                          >
-                            {item.pcId}
-                          </span>
-                        </td>
+                        {/* Node Specific Columns (e.g. Node 1, Node 2...) */}
+                        {availableNodes.map((nodeId) => {
+                          const nStatus = row.nodeStatuses[nodeId];
+                          const isNodeOk = nStatus?.status === 'OK';
+                          const isNodeMissing = !nStatus || nStatus.status === 'MISSING' || nStatus.status === 'WARN';
 
-                        {/* Action / Sync Shortcut */}
-                        <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                          {isMissing && item.can_sync ? (
-                            <button
-                              type="button"
-                              className="btn btn-suite-primary btn-xs btn-sync-tool"
-                              title={`Sinkronkan ${item.item} dari node donor / Hub cache`}
-                              onClick={() => {
-                                alert(`Memulai proses sinkronisasi untuk ${item.item} pada node ${item.pcId}...`);
+                          return (
+                            <td
+                              key={nodeId}
+                              style={{
+                                textAlign: 'center',
+                                verticalAlign: 'middle',
+                                whiteSpace: 'nowrap',
                               }}
                             >
-                              <DownloadCloudIcon size={12} />
-                              <span>Sync Tool</span>
-                            </button>
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>-</span>
-                          )}
-                        </td>
+                              {isNodeOk ? (
+                                <CheckCircleIcon size={16} />
+                              ) : isNodeMissing && row.can_sync ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-suite-primary btn-xs btn-sync-tool"
+                                  title={`Sinkronkan ${row.item} ke ${nodeId}`}
+                                  onClick={() => handleSyncNodeTool(nodeId, row)}
+                                >
+                                  <DownloadCloudIcon size={12} />
+                                  <span>Sync</span>
+                                </button>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                  -
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="empty-state-cell" style={{ textAlign: 'center', padding: '2.5rem 1.5rem' }}>
+                    <td
+                      colSpan={4 + availableNodes.length}
+                      className="empty-state-cell"
+                      style={{ textAlign: 'center', padding: '2.5rem 1.5rem' }}
+                    >
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem' }}>
                         <AlertCircleIcon size={24} color="var(--status-warn-text, #f59e0b)" />
                         <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
@@ -400,7 +487,9 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
                         </div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', maxWidth: '440px', lineHeight: 1.4 }}>
                           {selectedNodeFilter !== 'ALL' && (
-                            <span>Node ini belum memiliki paket CTS / GTS / STS. Letakkan file zip suite di folder AUTO atau sinkronkan dari node donor.</span>
+                            <span>
+                              Node ini belum memiliki paket CTS / GTS / STS. Letakkan file zip suite di folder AUTO atau klik Sync untuk mengambil dari node donor.
+                            </span>
                           )}
                         </div>
                         <button
@@ -422,9 +511,18 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="modal-footer preflight-modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1.25rem' }}>
+        <div
+          className="modal-footer preflight-modal-footer"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '0.75rem 1.25rem',
+          }}
+        >
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            Menampilkan {filteredItems.length} dari {allItems.length} item diagnostik across {availableNodes.length} node.
+            Menampilkan {filteredRows.length} dari {matrixRows.length} item across{' '}
+            {availableNodes.length} workstation node.
           </div>
           <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
             Tutup

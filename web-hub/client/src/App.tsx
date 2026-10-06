@@ -9,6 +9,7 @@ import { ResultsExplorer } from './components/ResultsExplorer';
 import { LaundrySelectModal } from './components/LaundrySelectModal';
 import { TerminalLogsModal } from './components/TerminalLogsModal';
 import { PreflightModal } from './components/PreflightModal';
+import { FloatingTransferModal, ActiveTransferItem } from './components/FloatingTransferModal';
 import { LaundryWorkflowState, isModelMatch, detectZipPlanKind } from './components/ModelLaundryWorkflow';
 
 export const App: React.FC = () => {
@@ -41,6 +42,72 @@ export const App: React.FC = () => {
   const [isPreflightModalOpen, setIsPreflightModalOpen] = useState(false);
   const [activeWorkflowIdForPicker, setActiveWorkflowIdForPicker] = useState<string>('');
   const [pickerPcId, setPickerPcId] = useState<string>('');
+
+  // Floating transfer states
+  const [activeTransfers, setActiveTransfers] = useState<ActiveTransferItem[]>([]);
+
+  // Simulation / progression ticker for active transfers
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveTransfers((prev) => {
+        if (prev.length === 0) return prev;
+        return prev.map((t) => {
+          if (t.status !== 'running') return t;
+          const chunk = Math.min(t.totalBytes - t.transferredBytes, (t.speedMBps * 1024 * 1024) / 4);
+          const nextTransferred = t.transferredBytes + chunk;
+          const nextProgress = Math.min(100, (nextTransferred / t.totalBytes) * 100);
+          const isDone = nextProgress >= 100;
+          return {
+            ...t,
+            transferredBytes: nextTransferred,
+            progress: nextProgress,
+            status: isDone ? 'completed' : 'running',
+          };
+        });
+      });
+    }, 250);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleStartTransfer = (sourceNode: string, targetNode: string, resourceName: string) => {
+    const isZip = resourceName.endsWith('.zip') || resourceName.includes('OXM');
+    const totalBytes = isZip ? 16.34 * 1024 * 1024 * 1024 : 1.2 * 1024 * 1024 * 1024;
+    const newTransfer: ActiveTransferItem = {
+      id: `tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: isZip ? 'firmware' : 'tools',
+      sourceNode: sourceNode || 'Endri',
+      targetNode: targetNode || 'ubuntu-gba-pro',
+      filename: resourceName.startsWith('CTS') || resourceName.startsWith('GTS') || resourceName.startsWith('STS')
+        ? resourceName
+        : `ALL_OXM_${resourceName}_S911BXXUAGZIF_S911B01.zip`,
+      totalBytes,
+      transferredBytes: totalBytes * 0.002,
+      speedMBps: 6.2 + Math.random() * 2.5,
+      status: 'running',
+      progress: 0.2,
+    };
+
+    setActiveTransfers((prev) => [newTransfer, ...prev]);
+  };
+
+  const handlePauseResumeTransfer = (id: string) => {
+    setActiveTransfers((prev) =>
+      prev.map((t) => {
+        if (t.id === id) {
+          return {
+            ...t,
+            status: t.status === 'running' ? 'paused' : 'running',
+          };
+        }
+        return t;
+      })
+    );
+  };
+
+  const handleCancelTransfer = (id: string) => {
+    setActiveTransfers((prev) => prev.filter((t) => t.id !== id));
+  };
 
   // Top Card Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -360,6 +427,14 @@ export const App: React.FC = () => {
           preflightReports={preflightReports}
           bridges={bridges}
           onTriggerScan={triggerPreflightCheck}
+          onStartSync={handleStartTransfer}
+        />
+
+        {/* Floating Accordion Transfer Modal (Bottom-Left) */}
+        <FloatingTransferModal
+          transfers={activeTransfers}
+          onPauseResume={handlePauseResumeTransfer}
+          onCancel={handleCancelTransfer}
         />
       </main>
     </div>

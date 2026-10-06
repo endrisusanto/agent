@@ -3681,4 +3681,215 @@ button.btn-running:disabled svg {
   }
 }
 
+/* ==========================================================================
+   FLOATING ACCORDION TRANSFER MODAL (Gambar 2 Reference)
+   ========================================================================== */
+.floating-transfer-container {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 9999;
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  background: #11141f;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+  overflow: hidden;
+  font-family: inherit;
+  animation: slideUpFade 0.2s ease-out;
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.floating-transfer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 0.9rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  user-select: none;
+}
+
+.floating-transfer-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.floating-transfer-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #fff;
+}
+
+.floating-transfer-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: -0.01em;
+}
+
+.floating-transfer-count-badge {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 500;
+  margin-left: 0.2rem;
+}
+
+.floating-transfer-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.floating-transfer-body {
+  padding: 0.5rem;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.transfer-card {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-md, 8px);
+  padding: 0.75rem 0.85rem;
+}
+
+.transfer-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.45rem;
+}
+
+.transfer-nodes-flow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.transfer-node-pill {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: #1e2433;
+  color: #93c5fd;
+  border: 1px solid rgba(147, 197, 253, 0.2);
+}
+
+.transfer-node-target {
+  background: #1e293b;
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.transfer-flow-arrow {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.transfer-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.transfer-pct-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-right: 0.2rem;
+}
+
+.transfer-ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.transfer-ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.transfer-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.transfer-file-icon {
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.transfer-filename {
+  font-family: var(--font-mono);
+  font-size: 0.71rem;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.transfer-progress-track {
+  width: 100%;
+  height: 4px;
+  background: #1e293b;
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-bottom: 0.45rem;
+}
+
+.transfer-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0284c7, #38bdf8);
+  border-radius: 9999px;
+  transition: width 0.25s linear;
+}
+
+.transfer-metrics-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
+.transfer-speed {
+  color: #94a3b8;
+}
+
+.transfer-sizes {
+  color: #cbd5e1;
+}
+
 
