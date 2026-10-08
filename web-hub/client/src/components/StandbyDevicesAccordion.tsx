@@ -273,7 +273,7 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
         <div className="accordion-body">
           {/* Active STS Mode Lock Notice */}
           {activeTestPlan === 'STS' && (
-            <div className="notice-banner" style={{ backgroundColor: 'rgba(234, 179, 8, 0.1)', borderColor: 'rgba(234, 179, 8, 0.3)', color: 'var(--accent-warning, #eab308)' }}>
+            <div className="notice-banner notice-banner-sts">
               ⚡ <strong>Mode STS Aktif:</strong> Hanya perangkat dengan build type <strong>USERDEBUG</strong> yang dapat dipilih untuk automasi STS.
             </div>
           )}
@@ -289,18 +289,21 @@ export const StandbyDevicesAccordion: React.FC<StandbyDevicesAccordionProps> = (
           <div className="standby-toolbar">
             <div className="model-pills-bar" style={{ width: '100%' }}>
               <button
+                type="button"
                 className={`model-pill ${selectedModelFilter === 'ALL' ? 'active' : ''}`}
                 onClick={() => setSelectedModelFilter('ALL')}
               >
-                SEMUA <span className="pill-count">{devices.length}</span>
+                <span>SEMUA</span> <span className="pill-count">{devices.length}</span>
               </button>
               {sortedModels.map((model) => (
                 <button
+                  type="button"
                   key={model}
                   className={`model-pill ${selectedModelFilter === model ? 'active' : ''}`}
                   onClick={() => setSelectedModelFilter(model)}
+                  title={model}
                 >
-                  {model} <span className="pill-count">{modelCounts[model]}</span>
+                  <span>{model.replace(/^SM-/i, '')}</span> <span className="pill-count">{modelCounts[model]}</span>
                 </button>
               ))}
             </div>

@@ -37,52 +37,52 @@
   --text-muted: #8c959f;
 
   /* Solid Status Colors (WCAG compliant) */
-  --status-ready-text: #1a7f37;
-  --status-ready-bg: #dafbe1;
-  --status-ready-border: #4ac26b;
+  --status-ready-text: #15803d;
+  --status-ready-bg: #dcfce7;
+  --status-ready-border: #86efac;
 
-  --status-running-text: #9a6700;
-  --status-running-bg: #fff8c5;
-  --status-running-border: #d4a72c;
+  --status-running-text: #78350f;
+  --status-running-bg: #fef3c7;
+  --status-running-border: #f59e0b;
 
-  --status-pass-text: #0969da;
-  --status-pass-bg: #ddf4ff;
-  --status-pass-border: #54aeff;
+  --status-pass-text: #0369a1;
+  --status-pass-bg: #e0f2fe;
+  --status-pass-border: #7dd3fc;
 
-  --status-fail-text: #cf222e;
-  --status-fail-bg: #ffebe9;
-  --status-fail-border: #ff8182;
+  --status-fail-text: #b91c1c;
+  --status-fail-bg: #fee2e2;
+  --status-fail-border: #fca5a5;
 
-  --status-busy-text: #8250df;
-  --status-busy-bg: #fbefff;
-  --status-busy-border: #d2a8ff;
+  --status-busy-text: #6b21a8;
+  --status-busy-bg: #f3e8ff;
+  --status-busy-border: #d8b4fe;
 
-  --status-offline-text: #57606a;
-  --status-offline-bg: #eaeef2;
-  --status-offline-border: #afb8c1;
+  --status-offline-text: #475569;
+  --status-offline-bg: #f1f5f9;
+  --status-offline-border: #cbd5e1;
 
-  --badge-pc-bg: #eef2f6;
-  --badge-pc-text: #24292f;
-  --badge-pc-border: #cfd6df;
+  --badge-pc-bg: #e2e8f0;
+  --badge-pc-text: #0f172a;
+  --badge-pc-border: #cbd5e1;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
 
   /* Primary Brand / Accent */
-  --accent-primary: #0969da;
-  --accent-hover: #0858b8;
-  --accent-subtle: #ddf4ff;
-  --accent-border: #54aeff;
-  --accent-text: #0969da;
+  --accent-primary: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-subtle: #dbeafe;
+  --accent-border: #93c5fd;
+  --accent-text: #1d4ed8;
 
   /* Console Log Box Tokens */
   --log-bg: #ffffff;
-  --log-text-default: #1f2328;
-  --log-text-pass: #1a7f37;
-  --log-text-fail: #cf222e;
-  --log-text-warn: #9a6700;
-  --log-text-info: #0969da;
-  --log-text-muted: #57606a;
+  --log-text-default: #0f172a;
+  --log-text-pass: #15803d;
+  --log-text-fail: #b91c1c;
+  --log-text-warn: #78350f;
+  --log-text-info: #0284c7;
+  --log-text-muted: #475569;
 }
 
 /* Dark Theme Tokens */
@@ -102,21 +102,21 @@
   --text-muted: #6e7681;
 
   /* Solid Status Colors */
-  --status-ready-text: #3fb950;
-  --status-ready-bg: #122619;
-  --status-ready-border: #238636;
+  --status-ready-text: #4ade80;
+  --status-ready-bg: rgba(34, 197, 94, 0.16);
+  --status-ready-border: rgba(34, 197, 94, 0.45);
 
-  --status-running-text: #d29922;
-  --status-running-bg: #2b2011;
-  --status-running-border: #9e6a03;
+  --status-running-text: #fcd34d;
+  --status-running-bg: rgba(245, 158, 11, 0.16);
+  --status-running-border: rgba(245, 158, 11, 0.45);
 
-  --status-pass-text: #58a6ff;
-  --status-pass-bg: #112338;
-  --status-pass-border: #1f6feb;
+  --status-pass-text: #38bdf8;
+  --status-pass-bg: rgba(56, 189, 248, 0.16);
+  --status-pass-border: rgba(56, 189, 248, 0.45);
 
-  --status-fail-text: #f85149;
-  --status-fail-bg: #2c1418;
-  --status-fail-border: #da3633;
+  --status-fail-text: #f87171;
+  --status-fail-bg: rgba(239, 68, 68, 0.16);
+  --status-fail-border: rgba(239, 68, 68, 0.45);
 
   --status-busy-text: #d2a8ff;
   --status-busy-bg: #271033;

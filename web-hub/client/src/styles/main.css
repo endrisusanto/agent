@@ -1744,37 +1744,68 @@ body {
 .model-pill {
   flex-shrink: 0;
   white-space: nowrap;
-  padding: 0.225rem 0.55rem;
-  font-size: 0.725rem;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
   font-weight: 600;
   border-radius: var(--radius-full);
-  border: 1px solid var(--border-subtle);
-  background-color: var(--bg-subtle);
-  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle, #cbd5e1);
+  background-color: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #0f172a);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.35rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: all var(--duration-fast) var(--ease-out-fast);
 }
 
+[data-theme="light"] .model-pill {
+  background-color: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+[data-theme="dark"] .model-pill {
+  background-color: #1e293b;
+  border-color: #334155;
+  color: #f1f5f9;
+}
+
 .model-pill:hover {
-  border-color: var(--text-secondary);
-  color: var(--text-primary);
+  border-color: var(--accent-primary, #2563eb);
+  color: var(--accent-primary, #2563eb);
+  transform: translateY(-1px);
 }
 
 .model-pill.active {
-  background-color: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: #ffffff;
+  background-color: var(--accent-primary, #2563eb) !important;
+  border-color: var(--accent-primary, #2563eb) !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
 }
 
 .pill-count {
-  font-size: 0.65rem;
-  opacity: 0.85;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 0.05rem 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: var(--bg-hover, #e2e8f0);
+  color: var(--text-primary, #0f172a);
+  padding: 0.05rem 0.4rem;
   border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle, #cbd5e1);
+  line-height: 1.2;
+}
+
+[data-theme="dark"] .pill-count {
+  background: #334155;
+  color: #f8fafc;
+  border-color: #475569;
+}
+
+.model-pill.active .pill-count {
+  background: rgba(255, 255, 255, 0.25) !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
 }
 
 .standby-filter-actions {
@@ -1879,14 +1910,27 @@ body {
 }
 
 .notice-banner {
-  padding: 0.5rem 0.875rem;
-  background-color: rgba(210, 153, 34, 0.12);
-  border: 1px solid rgba(210, 153, 34, 0.35);
-  border-radius: var(--radius-md);
-  color: #e3b341;
-  font-size: 0.785rem;
+  padding: 0.6rem 0.95rem;
+  background-color: var(--status-running-bg, #fef3c7);
+  border: 1px solid var(--status-running-border, #f59e0b);
+  border-radius: var(--radius-md, 10px);
+  color: var(--status-running-text, #78350f);
+  font-size: 0.8rem;
+  font-weight: 500;
   margin-bottom: 0.75rem;
-  line-height: 1.4;
+  line-height: 1.45;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.notice-banner strong {
+  color: inherit;
+  font-weight: 700;
+}
+
+[data-theme="dark"] .notice-banner {
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
 }
 
 .row-blocked {
@@ -1906,29 +1950,36 @@ body {
 .btn-suite-primary {
   height: 28px;
   line-height: 26px;
-  padding: 0 0.7rem;
+  padding: 0 0.85rem;
   font-size: 0.75rem;
   font-weight: 700;
-  border-radius: var(--radius-sm);
-  background-color: #238636;
-  color: #ffffff;
-  border: 1px solid #238636;
+  border-radius: var(--radius-sm, 6px);
+  background-color: #16a34a;
+  color: #ffffff !important;
+  border: 1px solid #15803d;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
   cursor: pointer;
   box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.35);
   transition: all var(--duration-fast) var(--ease-out-fast);
 }
 
 .btn-suite-primary:hover:not(:disabled) {
-  background-color: #2ea043;
+  background-color: #15803d;
+  border-color: #166534;
+  transform: translateY(-1px);
 }
 
 .btn-suite-primary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  background-color: var(--bg-hover, #94a3b8) !important;
+  border-color: var(--border-subtle, #cbd5e1) !important;
+  color: var(--text-muted, #64748b) !important;
+  box-shadow: none !important;
 }
 
 /* Running State Button: Colored outline, no solid fill, animated infinite progress underline */
