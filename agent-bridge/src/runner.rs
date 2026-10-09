@@ -181,7 +181,7 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
                 } else {
                     val.to_string()
                 };
-                xml_content.push_str(&format!("    <{k}>{escaped_v}</{k}>\n"));
+                xml_content.push_str(&format!("<{k}>{escaped_v}\n</{k}>\n"));
             }
         }
     }
@@ -193,7 +193,7 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
     let is_watch = if features_out.contains("feature:android.hardware.type.watch") { "true" } else { "false" };
-    xml_content.push_str(&format!("\n    <isWatch>{is_watch}</isWatch>\n"));
+    xml_content.push_str(&format!("\n<isWatch>{is_watch}</isWatch>\n\n"));
 
     // 3. Check Message App
     let sms_role_out = Command::new("adb")
@@ -208,7 +208,7 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
     } else {
         "Not Found"
     };
-    xml_content.push_str(&format!("    <message>{msg_val}</message>\n"));
+    xml_content.push_str(&format!("<message>{msg_val}</message>\n\n"));
 
     // 4. Check Browser
     let browser_out = Command::new("adb")
@@ -223,7 +223,7 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
     } else {
         "Not Found"
     };
-    xml_content.push_str(&format!("    <browser>{browser_val}</browser>\n"));
+    xml_content.push_str(&format!("<browser>{browser_val}</browser>\n\n"));
 
     // 5. Dynamic Client IDs
     let clientid_out = Command::new("adb")
@@ -237,12 +237,12 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
             let key = k.trim();
             let val = v.trim();
             if !key.is_empty() {
-                xml_content.push_str(&format!("    <{key}>{val}</{key}>\n"));
+                xml_content.push_str(&format!("<{key}>{val}</{key}>\n\n"));
             }
         }
     }
 
-    xml_content.push_str("\n    <ro.version>4.4</ro.version>\n</RO>\n");
+    xml_content.push_str("<ro.version>4.5</ro.version></RO>\n");
 
     // ponytail: Format filename as ro_{sales_code}_{csc_ver}.xml (e.g. ro_XID_A546EOLENFZJ1.xml)
     let xml_filename = if !sales_code.is_empty() && !csc_ver.is_empty() {
@@ -255,7 +255,7 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
     let xml_file = session_dir.join(&xml_filename);
 
     if let Ok(_) = fs::write(&xml_file, &xml_content) {
-        let _ = log_tx.send(format!("[AI Worker] ro.xml v4.4 generated: {}", xml_file.display()));
+        let _ = log_tx.send(format!("[AI Worker] ro.xml v4.5 generated: {}", xml_file.display()));
         let generic_ro = session_dir.join("ro.xml");
         let _ = fs::write(&generic_ro, &xml_content);
         Some(xml_file)
@@ -501,7 +501,7 @@ pub fn execute_suite_run(
     let _ = log_tx.send("[prepare] Waking and unlocking all target devices...".to_string());
     prepare_devices(&serials, &log_tx);
 
-    // 5. Auto Generate ro.xml v4.4 for target devices
+    // 5. Auto Generate ro.xml v4.5 for target devices
     for s in &serials {
         let _ = generate_ro_xml(s, &session_dir, &log_tx);
     }
