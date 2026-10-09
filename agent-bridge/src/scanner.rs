@@ -137,12 +137,23 @@ fn extract_model_from_filename(filename: &str) -> Option<String> {
     None
 }
 
-pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
+pub fn scan_laundry_zips(auto_root: &Path, cucian_dir: Option<&Path>) -> Vec<LaundryZipItem> {
     let mut dirs_to_scan = Vec::new();
+
+    // 0. User Configured Cucian Target Directory
+    if let Some(custom) = cucian_dir {
+        if !custom.as_os_str().is_empty() {
+            let _ = fs::create_dir_all(custom);
+            if custom.is_dir() && !dirs_to_scan.contains(&custom.to_path_buf()) {
+                dirs_to_scan.push(custom.to_path_buf());
+            }
+        }
+    }
 
     // 1. Custom environment variable
     if let Ok(cucian_env) = std::env::var("CUCIAN_DIR") {
         let p = std::path::PathBuf::from(cucian_env);
+        let _ = fs::create_dir_all(&p);
         if p.is_dir() && !dirs_to_scan.contains(&p) {
             dirs_to_scan.push(p);
         }
@@ -151,6 +162,7 @@ pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
     // 2. User HOME Downloads/CUCIAN
     if let Ok(home) = std::env::var("HOME") {
         let home_cucian = std::path::PathBuf::from(home).join("Downloads").join("CUCIAN");
+        let _ = fs::create_dir_all(&home_cucian);
         if home_cucian.is_dir() && !dirs_to_scan.contains(&home_cucian) {
             dirs_to_scan.push(home_cucian);
         }
@@ -169,6 +181,7 @@ pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
     // 4. Specific known paths & root/container mounts
     for candidate in &["/home/endri-pro/Downloads/CUCIAN", "/cucian", "/tmp/CUCIAN"] {
         let p = std::path::PathBuf::from(candidate);
+        let _ = fs::create_dir_all(&p);
         if p.is_dir() && !dirs_to_scan.contains(&p) {
             dirs_to_scan.push(p);
         }
@@ -176,10 +189,12 @@ pub fn scan_laundry_zips(auto_root: &Path) -> Vec<LaundryZipItem> {
 
     // 5. AUTO root paths
     let results_dir = auto_root.join("Results");
+    let _ = fs::create_dir_all(&results_dir);
     if results_dir.is_dir() && !dirs_to_scan.contains(&results_dir) {
         dirs_to_scan.push(results_dir);
     }
     let auto_cucian = auto_root.join("CUCIAN");
+    let _ = fs::create_dir_all(&auto_cucian);
     if auto_cucian.is_dir() && !dirs_to_scan.contains(&auto_cucian) {
         dirs_to_scan.push(auto_cucian);
     }

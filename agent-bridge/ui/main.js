@@ -7,9 +7,11 @@ const zipCount = document.getElementById('zipCount');
 const pcIdInput = document.getElementById('pcId');
 const hubUrlInput = document.getElementById('hubUrl');
 const autoRootInput = document.getElementById('autoRoot');
+const cucianDirInput = document.getElementById('cucianDir');
 const logConsole = document.getElementById('logConsole');
 const configForm = document.getElementById('configForm');
 const btnBrowse = document.getElementById('btnBrowse');
+const btnBrowseCucian = document.getElementById('btnBrowseCucian');
 const btnClearLogs = document.getElementById('btnClearLogs');
 const btnOpenHub = document.getElementById('btnOpenHub');
 
@@ -36,6 +38,7 @@ async function updateStatus() {
         pcIdInput.value = status.pc_id || '';
         hubUrlInput.value = status.hub_url || '';
         autoRootInput.value = status.auto_root || '';
+        cucianDirInput.value = status.cucian_dir || '';
         isInitialLoad = false;
       }
 
@@ -56,6 +59,7 @@ configForm.addEventListener('submit', async (e) => {
       pcId: pcIdInput.value.trim(),
       hubUrl: hubUrlInput.value.trim(),
       autoRoot: autoRootInput.value.trim(),
+      cucianDir: cucianDirInput.value.trim(),
     });
     alert('Config saved. Reconnecting...');
   } catch (err) {
@@ -73,6 +77,19 @@ btnBrowse.addEventListener('click', async () => {
     console.error('Browse error:', err);
   }
 });
+
+if (btnBrowseCucian) {
+  btnBrowseCucian.addEventListener('click', async () => {
+    try {
+      const folder = await invoke('select_cucian_folder');
+      if (folder) {
+        cucianDirInput.value = folder;
+      }
+    } catch (err) {
+      console.error('Browse Cucian error:', err);
+    }
+  });
+}
 
 btnClearLogs.addEventListener('click', async () => {
   try {

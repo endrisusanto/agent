@@ -355,20 +355,29 @@ fn load_initial_config() -> BridgeConfig {
         }
         "/run/media/endri-pro/BINARY_HDD/AUTO".to_string()
     });
+    let default_cucian_dir = env::var("CUCIAN_DIR").unwrap_or_else(|_| {
+        dirs_next_or_home().join("Downloads").join("CUCIAN").to_string_lossy().to_string()
+    });
 
     let path = config_path();
     if path.is_file() {
         if let Ok(data) = fs::read_to_string(path) {
-            if let Ok(cfg) = serde_json::from_str::<BridgeConfig>(&data) {
+            if let Ok(mut cfg) = serde_json::from_str::<BridgeConfig>(&data) {
+                if cfg.cucian_dir.is_empty() {
+                    cfg.cucian_dir = default_cucian_dir.clone();
+                }
+                let _ = fs::create_dir_all(&cfg.cucian_dir);
                 return cfg;
             }
         }
     }
 
+    let _ = fs::create_dir_all(&default_cucian_dir);
     BridgeConfig {
         pc_id: default_pc_id,
         hub_url: default_hub_url,
         auto_root: default_auto_root,
+        cucian_dir: default_cucian_dir,
     }
 }
 
@@ -392,12 +401,15 @@ fn log_msg(state: &AppState, line: impl AsRef<str>) {
 // Background WebSocket Worker Thread
 async fn run_bridge_worker(state: AppState) {
     loop {
-        let (hub_url, pc_id, auto_root_str) = {
+        let (hub_url, pc_id, auto_root_str, cucian_dir_str) = {
             let cfg = state.config.lock().unwrap();
-            (cfg.hub_url.clone(), cfg.pc_id.clone(), cfg.auto_root.clone())
+            (cfg.hub_url.clone(), cfg.pc_id.clone(), cfg.auto_root.clone(), cfg.cucian_dir.clone())
         };
 
         let auto_root = PathBuf::from(&auto_root_str);
+        let cucian_dir = PathBuf::from(&cucian_dir_str);
+        let _ = fs::create_dir_all(&cucian_dir);
+
         log_msg(&state, format!("[Bridge] Connecting to Hub: {} as PC_ID: {}", hub_url, pc_id));
 
         match connect_async(&hub_url).await {
@@ -409,17 +421,19 @@ async fn run_bridge_worker(state: AppState) {
                     st.pc_id = pc_id.clone();
                     st.hub_url = hub_url.clone();
                     st.auto_root = auto_root_str.clone();
+                    st.cucian_dir = cucian_dir_str.clone();
                 }
 
                 let (mut write, mut read) = ws_stream.split();
 
                 // 1. Send Node Registration & Initial Preflight Report
-                let zips = scanner::scan_laundry_zips(&auto_root);
+                let zips = scanner::scan_laundry_zips(&auto_root, Some(&cucian_dir));
                 let reg_msg = json!({
                     "type": "REGISTER_NODE",
                     "pcId": pc_id,
                     "os": env::consts::OS,
                     "autoRoot": auto_root_str,
+                    "cucianDir": cucian_dir_str,
                     "laundryZips": zips,
                 });
                 let _ = write.send(Message::Text(reg_msg.to_string())).await;
@@ -434,6 +448,7 @@ async fn run_bridge_worker(state: AppState) {
 
                 // 2. Spawn periodic scanner loop
                 let auto_root_scan = auto_root.clone();
+                let cucian_dir_scan = cucian_dir.clone();
                 let pc_id_scan = pc_id.clone();
                 let (scan_tx, mut scan_rx) = mpsc::unbounded_channel::<Message>();
                 *BROADCAST_WS_TX.lock().unwrap() = Some(scan_tx.clone());
@@ -443,7 +458,7 @@ async fn run_bridge_worker(state: AppState) {
                     let mut tick_counter: u32 = 0;
                     loop {
                         let devs = scanner::scan_all_devices(&auto_root_scan);
-                        let zips = scanner::scan_laundry_zips(&auto_root_scan);
+                        let zips = scanner::scan_laundry_zips(&auto_root_scan, Some(&cucian_dir_scan));
 
                         let dev_msg = json!({
                             "type": "DEVICE_LIST_UPDATE",
@@ -759,11 +774,13 @@ fn save_bridge_config(
     pc_id: String,
     hub_url: String,
     auto_root: String,
+    cucian_dir: String,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
     let clean_pc = pc_id.trim().to_string();
     let clean_url = hub_url.trim().to_string();
     let clean_root = auto_root.trim().to_string();
+    let clean_cucian = cucian_dir.trim().to_string();
 
     if clean_pc.is_empty() {
         return Err("PC ID cannot be empty".to_string());
@@ -772,10 +789,18 @@ fn save_bridge_config(
         return Err("Hub URL cannot be empty".to_string());
     }
 
+    if !clean_cucian.is_empty() {
+        let _ = fs::create_dir_all(&clean_cucian);
+    }
+    if !clean_root.is_empty() {
+        let _ = fs::create_dir_all(&clean_root);
+    }
+
     let new_cfg = BridgeConfig {
         pc_id: clean_pc.clone(),
         hub_url: clean_url.clone(),
         auto_root: clean_root.clone(),
+        cucian_dir: clean_cucian.clone(),
     };
 
     save_config_to_disk(&new_cfg)?;
@@ -790,6 +815,7 @@ fn save_bridge_config(
         st.pc_id = clean_pc;
         st.hub_url = clean_url;
         st.auto_root = clean_root;
+        st.cucian_dir = clean_cucian;
     }
 
     state.restart_trigger.notify_one();
@@ -806,6 +832,18 @@ async fn select_auto_folder() -> Option<String> {
 }
 
 #[tauri::command]
+async fn select_cucian_folder() -> Option<String> {
+    let folder = rfd::AsyncFileDialog::new()
+        .set_title("Pilih Folder Target Scanner Laundry (CUCIAN)")
+        .pick_folder()
+        .await;
+    if let Some(ref f) = folder {
+        let _ = fs::create_dir_all(f.path());
+    }
+    folder.map(|f| f.path().to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn clear_bridge_logs(state: tauri::State<AppState>) {
     if let Ok(mut logs) = state.logs.lock() {
         logs.clear();
@@ -816,13 +854,38 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let is_headless = args.iter().any(|a| a == "--headless" || a == "-d");
 
-    let initial_config = load_initial_config();
+    let mut initial_config = load_initial_config();
+
+    if let Some(pos) = args.iter().position(|a| a == "--server" || a == "-s") {
+        if let Some(val) = args.get(pos + 1) {
+            initial_config.hub_url = val.clone();
+        }
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--node-id" || a == "-n") {
+        if let Some(val) = args.get(pos + 1) {
+            initial_config.pc_id = val.clone();
+        }
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--auto-root" || a == "-a") {
+        if let Some(val) = args.get(pos + 1) {
+            initial_config.auto_root = val.clone();
+        }
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--cucian-dir" || a == "-c") {
+        if let Some(val) = args.get(pos + 1) {
+            initial_config.cucian_dir = val.clone();
+        }
+    }
+
+    let _ = fs::create_dir_all(&initial_config.cucian_dir);
+
     let app_state = AppState {
         config: Arc::new(Mutex::new(initial_config.clone())),
         status: Arc::new(Mutex::new(BridgeLiveStatus {
             pc_id: initial_config.pc_id.clone(),
             hub_url: initial_config.hub_url.clone(),
             auto_root: initial_config.auto_root.clone(),
+            cucian_dir: initial_config.cucian_dir.clone(),
             is_connected: false,
             device_count: 0,
             devices: Vec::new(),
@@ -835,10 +898,11 @@ fn main() {
 
     log_msg(&app_state, "==================================================");
     log_msg(&app_state, " GBA Agentic Auto Bridge Started");
-    log_msg(&app_state, format!(" PC ID:     {}", initial_config.pc_id));
-    log_msg(&app_state, format!(" Hub URL:   {}", initial_config.hub_url));
-    log_msg(&app_state, format!(" AUTO Root: {}", initial_config.auto_root));
-    log_msg(&app_state, format!(" Mode:      {}", if is_headless { "Headless Daemon" } else { "Tauri Desktop with AppTray" }));
+    log_msg(&app_state, format!(" PC ID:       {}", initial_config.pc_id));
+    log_msg(&app_state, format!(" Hub URL:     {}", initial_config.hub_url));
+    log_msg(&app_state, format!(" AUTO Root:   {}", initial_config.auto_root));
+    log_msg(&app_state, format!(" CUCIAN Dir:  {}", initial_config.cucian_dir));
+    log_msg(&app_state, format!(" Mode:        {}", if is_headless { "Headless Daemon" } else { "Tauri Desktop with AppTray" }));
     log_msg(&app_state, "==================================================");
 
     if is_headless {
@@ -859,6 +923,7 @@ fn main() {
             get_bridge_status,
             save_bridge_config,
             select_auto_folder,
+            select_cucian_folder,
             clear_bridge_logs
         ])
         .setup(|app| {

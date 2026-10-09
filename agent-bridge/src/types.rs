@@ -6,6 +6,8 @@ pub struct BridgeConfig {
     pub pc_id: String,
     pub hub_url: String,
     pub auto_root: String,
+    #[serde(default)]
+    pub cucian_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +117,7 @@ pub struct BridgeLiveStatus {
     pub pc_id: String,
     pub hub_url: String,
     pub auto_root: String,
+    pub cucian_dir: String,
     pub is_connected: bool,
     pub device_count: usize,
     pub devices: Vec<DeviceInfo>,
