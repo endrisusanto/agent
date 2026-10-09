@@ -18,8 +18,6 @@ export const App: React.FC = () => {
     devices,
     activeJobs,
     jobHistory,
-    workflows: serverWorkflows,
-    syncWorkflows,
     uiState,
     updateUiState,
     transfers,
@@ -88,7 +86,7 @@ export const App: React.FC = () => {
     return Array.from(map.values()).sort((a, b) => b.modifiedAt - a.modifiedAt);
   }, [bridges]);
 
-  // Manage multiple laundry workflows (unified on server + synced across all devices)
+  // Manage multiple laundry workflows purely in client localStorage
   const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>(() => {
     const saved = localStorage.getItem('gba_laundry_workflows');
     if (saved) {
@@ -112,15 +110,7 @@ export const App: React.FC = () => {
     ];
   });
 
-  // When server broadcasts unified workflows, update local state
-  useEffect(() => {
-    if (serverWorkflows && serverWorkflows.length > 0) {
-      setWorkflows(serverWorkflows);
-      localStorage.setItem('gba_laundry_workflows', JSON.stringify(serverWorkflows));
-    }
-  }, [serverWorkflows]);
-
-  // Persist workflows
+  // Persist workflows to localStorage on any change
   useEffect(() => {
     localStorage.setItem('gba_laundry_workflows', JSON.stringify(workflows));
   }, [workflows]);
@@ -130,17 +120,13 @@ export const App: React.FC = () => {
     localStorage.setItem('gba_theme', theme);
   }, [theme]);
 
-  // Workflow Handlers
+  // Workflow Handlers (strictly local state, no server race conditions)
   const handleUpdateWorkflow = (updated: LaundryWorkflowState) => {
-    const next = workflows.map((w) => (w.id === updated.id ? updated : w));
-    setWorkflows(next);
-    syncWorkflows(next);
+    setWorkflows((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
   };
 
   const handleRemoveWorkflow = (id: string) => {
-    const next = workflows.filter((w) => w.id !== id);
-    setWorkflows(next);
-    syncWorkflows(next);
+    setWorkflows((prev) => prev.filter((w) => w.id !== id));
   };
 
   const handleAddWorkflow = () => {
@@ -151,9 +137,7 @@ export const App: React.FC = () => {
       selectedModules: [],
       selectedSerials: [],
     };
-    const next = [...workflows, newWorkflow];
-    setWorkflows(next);
-    syncWorkflows(next);
+    setWorkflows((prev) => [...prev, newWorkflow]);
   };
 
   const handleOpenLaundryPicker = (workflowId: string, pcId?: string) => {

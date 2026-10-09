@@ -82,6 +82,8 @@ export interface ActiveJob {
   startedAt: number;
   devices: string[];
   elapsed_secs: number;
+  workflow_id?: string;
+  laundry_zip_path?: string;
   summary?: SuiteSummary;
   zip_file?: string;
   zip_files?: string[];
@@ -245,7 +247,6 @@ const bridges = new Map<string, BridgeNode>();
 const devices = new Map<string, DeviceInfo>();
 const activeJobs = new Map<string, ActiveJob>();
 const jobHistory: ActiveJob[] = [];
-let serverWorkflows: LaundryWorkflowState[] = [];
 const preflightReports = new Map<string, any>();
 
 export function getAutoRoot(): string {
@@ -444,8 +445,6 @@ export function generateLocalPreflightReport(autoRootParam?: string, pcId = 'End
   };
 }
 
-const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || path.join(getAutoRoot(), 'workflows_state.json');
-const FALLBACK_WORKFLOWS_FILE = path.join(__dirname, '../workflows_state.json');
 const UI_STATE_FILE = process.env.UI_STATE_FILE || '/tmp/gba_ui_state.json';
 const TRANSFERS_FILE = process.env.TRANSFERS_FILE || '/tmp/gba_transfers.json';
 const DELETED_RUNS_FILE = process.env.DELETED_RUNS_FILE || '/tmp/gba_deleted_runs.json';
@@ -530,41 +529,6 @@ let serverUiState: UnifiedUiState = {
 
 let serverActiveTransfers: ActiveTransferItem[] = [];
 
-function loadWorkflowsFromDisk(): void {
-  try {
-    const file = fs.existsSync(WORKFLOWS_FILE) ? WORKFLOWS_FILE : (fs.existsSync(FALLBACK_WORKFLOWS_FILE) ? FALLBACK_WORKFLOWS_FILE : null);
-    if (file) {
-      const data = fs.readFileSync(file, 'utf8');
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        serverWorkflows = parsed;
-        console.log(`[Hub] Loaded ${serverWorkflows.length} unified workflows from ${file}`);
-        return;
-      }
-    }
-  } catch (err) {
-    console.error('[Hub] Failed to load workflows state:', err);
-  }
-  if (serverWorkflows.length === 0) {
-    serverWorkflows = [{
-      id: 'wf-initial',
-      model: '',
-      selectedModules: [],
-      selectedSerials: [],
-      pda: ''
-    }];
-  }
-}
-
-function saveWorkflowsToDisk(wfs: LaundryWorkflowState[]): void {
-  try {
-    const targetFile = fs.existsSync(path.dirname(WORKFLOWS_FILE)) ? WORKFLOWS_FILE : FALLBACK_WORKFLOWS_FILE;
-    fs.writeFileSync(targetFile, JSON.stringify(wfs, null, 2), 'utf8');
-  } catch (err) {
-    console.error('[Hub] Failed to save workflows state to disk:', err);
-  }
-}
-
 function loadUiStateFromDisk(): void {
   loadDeletedRunsFromDisk();
   try {
@@ -597,11 +561,6 @@ function saveUiStateToDisk(): void {
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// REST: Workflows State API
-app.get('/api/workflows', (_req, res) => {
-  res.json({ workflows: serverWorkflows });
-});
 
 // REST: Unified UI State API
 app.get('/api/ui-state', (_req, res) => {
@@ -681,17 +640,6 @@ app.get('/api/sync/file', (req, res) => {
   }
 
   return res.status(404).send(`Tool resource not found: ${reqPath}`);
-});
-
-app.post('/api/workflows', (req, res) => {
-  const { workflows } = req.body;
-  if (Array.isArray(workflows)) {
-    serverWorkflows = workflows;
-    saveWorkflowsToDisk(serverWorkflows);
-    broadcastFleetState();
-    return res.json({ success: true, count: serverWorkflows.length });
-  }
-  return res.status(400).json({ error: 'Expected array of workflows' });
 });
 
 // Serve static frontend files if built with no-cache headers for HTML
@@ -1284,7 +1232,6 @@ function broadcastFleetState() {
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50),
-    workflows: serverWorkflows,
     preflightReports: Array.from(preflightReports.values()),
     uiState: serverUiState,
     transfers: serverActiveTransfers
@@ -1424,7 +1371,7 @@ wssBridge.on('connection', (ws, req) => {
         }
 
         case 'SUITE_STATUS_UPDATE': {
-          const { run_id, suite, status, elapsed_secs, devices: devList, test_type } = msg;
+          const { run_id, suite, status, elapsed_secs, devices: devList, test_type, workflow_id, laundry_zip_path } = msg;
           if (!run_id || deletedRunIds.has(run_id)) break;
 
           const hist = jobHistory.find(j => j.run_id === run_id);
@@ -1437,6 +1384,8 @@ wssBridge.on('connection', (ws, req) => {
             job = {
               run_id,
               pcId: registeredPcId,
+              workflow_id,
+              laundry_zip_path,
               test_type: test_type || 'CTS',
               status: status || 'Running',
               suite: suite || 'CTS',
@@ -1452,6 +1401,8 @@ wssBridge.on('connection', (ws, req) => {
             job.suite = suite;
             job.status = status;
             job.elapsed_secs = elapsed_secs || job.elapsed_secs;
+            if (workflow_id) job.workflow_id = workflow_id;
+            if (laundry_zip_path) job.laundry_zip_path = laundry_zip_path;
           }
           broadcastFleetState();
           break;
@@ -1568,7 +1519,6 @@ wssUi.on('connection', (ws) => {
     devices: Array.from(devices.values()),
     activeJobs: Array.from(activeJobs.values()),
     jobHistory: jobHistory.slice(-50),
-    workflows: serverWorkflows,
     preflightReports: Array.from(preflightReports.values()),
     uiState: serverUiState,
     transfers: serverActiveTransfers
@@ -1593,6 +1543,8 @@ wssUi.on('connection', (ws) => {
               job = {
                 run_id,
                 pcId: targetPcId,
+                workflow_id: payload.workflow_id,
+                laundry_zip_path: payload.laundry_zip_path,
                 test_type: payload.test_type || 'SMR',
                 status: 'Starting',
                 suite: payload.test_type || 'SMR',
@@ -1705,15 +1657,6 @@ wssUi.on('connection', (ws) => {
           break;
         }
 
-        case 'SYNC_WORKFLOWS': {
-          if (Array.isArray(msg.workflows)) {
-            serverWorkflows = msg.workflows;
-            saveWorkflowsToDisk(serverWorkflows);
-            broadcastFleetState();
-          }
-          break;
-        }
-
         case 'SYNC_UI_STATE': {
           if (msg.uiState && typeof msg.uiState === 'object') {
             serverUiState = { ...serverUiState, ...msg.uiState };
@@ -1820,7 +1763,6 @@ setInterval(() => {
   }
 }, 1000);
 
-loadWorkflowsFromDisk();
 loadUiStateFromDisk();
 initJobHistoryFromDisk();
 

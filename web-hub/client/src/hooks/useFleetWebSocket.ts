@@ -152,7 +152,6 @@ export function useFleetWebSocket() {
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [activeJobs, setActiveJobs] = useState<ActiveJobItem[]>([]);
   const [jobHistory, setJobHistory] = useState<ActiveJobItem[]>([]);
-  const [workflows, setWorkflows] = useState<LaundryWorkflowState[]>([]);
   const [preflightReports, setPreflightReports] = useState<PreflightReport[]>([]);
   const [uiState, setUiState] = useState<UnifiedUiState>({
     standbyExpanded: false,
@@ -173,7 +172,6 @@ export function useFleetWebSocket() {
   const reconnectTimeoutRef = useRef<number | null>(null);
   const logsByRunIdRef = useRef<Map<string, string[]>>(new Map());
   const lastLocalUiUpdateRef = useRef<number>(0);
-  const lastLocalWorkflowsUpdateRef = useRef<number>(0);
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -195,13 +193,6 @@ export function useFleetWebSocket() {
           case 'FLEET_STATE': {
             setBridges(msg.bridges || []);
             setDevices(msg.devices || []);
-            
-            // Guard against stale broadcast overwriting recent local workflow updates
-            if (Date.now() - lastLocalWorkflowsUpdateRef.current > 800) {
-              if (Array.isArray(msg.workflows) && msg.workflows.length > 0) {
-                setWorkflows(msg.workflows);
-              }
-            }
 
             if (Array.isArray(msg.preflightReports)) {
               setPreflightReports(msg.preflightReports);
@@ -383,14 +374,6 @@ export function useFleetWebSocket() {
     fetch('/api/history', { method: 'DELETE' }).catch(() => {});
   }, []);
 
-  const syncWorkflows = useCallback((newWorkflows: LaundryWorkflowState[]) => {
-    lastLocalWorkflowsUpdateRef.current = Date.now();
-    setWorkflows(newWorkflows);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'SYNC_WORKFLOWS', workflows: newWorkflows }));
-    }
-  }, []);
-
   const updateUiState = useCallback((partial: Partial<UnifiedUiState>) => {
     lastLocalUiUpdateRef.current = Date.now();
     setUiState((prev) => ({ ...prev, ...partial }));
@@ -464,9 +447,6 @@ export function useFleetWebSocket() {
     devices,
     activeJobs,
     jobHistory,
-    workflows,
-    setWorkflows,
-    syncWorkflows,
     uiState,
     updateUiState,
     transfers,

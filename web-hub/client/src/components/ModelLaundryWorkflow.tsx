@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DeviceItem, LaundryRow, LaundryZipItem, ActiveJobItem } from '../hooks/useFleetWebSocket';
 import { ChevronDownIcon, ChevronUpIcon, PlayIcon, TrashIcon, SmartphoneIcon, LampIcon } from './Icons';
 import { useAlertModal } from '../context/AlertContext';
@@ -181,6 +181,9 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     });
   }, [activeJobs, jobHistory, workflow.id, workflow.lastRunId, workflow.selectedZip, workflow.selectedSerials]);
 
+  const [isTriggering, setIsTriggering] = useState(false);
+  const triggeringTimerRef = useRef<number | null>(null);
+
   // Active test run job specifically for this workflow instance
   const activeJob = useMemo(() => {
     return activeJobs.find((j) => {
@@ -197,16 +200,35 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
         return true;
       }
 
-      // 3. Fallback: match by selected zip AND selected devices (only if no workflow_id was assigned)
-      if (!j.workflow_id && workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
-        if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
-          return true;
-        }
+      // 3. Match by matching physical device serials: if any selected device for this workflow is executing in this job
+      if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
+        return true;
+      }
+
+      // 4. Fallback: match by selected zip
+      if (workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
+        return true;
       }
 
       return false;
     });
   }, [activeJobs, workflow.id, workflow.lastRunId, workflow.selectedZip, workflow.selectedSerials]);
+
+  useEffect(() => {
+    if (activeJob && isTriggering) {
+      setIsTriggering(false);
+      if (triggeringTimerRef.current) {
+        clearTimeout(triggeringTimerRef.current);
+        triggeringTimerRef.current = null;
+      }
+    }
+  }, [activeJob, isTriggering]);
+
+  useEffect(() => {
+    return () => {
+      if (triggeringTimerRef.current) clearTimeout(triggeringTimerRef.current);
+    };
+  }, []);
 
   const isWorkflowRunning = Boolean(activeJob);
 
@@ -277,6 +299,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   const { showAlert } = useAlertModal();
 
   const handleRunLaundryAutomation = () => {
+    if (isTriggering || isWorkflowRunning) return;
+
     if (workflow.selectedSerials.length === 0) {
       showAlert({
         title: 'Perangkat Belum Dipilih',
@@ -349,6 +373,12 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       });
       return;
     }
+
+    setIsTriggering(true);
+    if (triggeringTimerRef.current) clearTimeout(triggeringTimerRef.current);
+    triggeringTimerRef.current = window.setTimeout(() => {
+      setIsTriggering(false);
+    }, 5000);
 
     const laundryTestType = `Laundry ${detectedPlanName}`;
     const generatedRunId = `run-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -557,15 +587,48 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
         <div className="accordion-header-actions" onClick={(e) => e.stopPropagation()}>
           {isLoaded && (
             <>
-              <button
-                className={`btn ${isWorkflowRunning ? 'btn-running' : 'btn-suite-primary'} btn-action-full`}
-                title={isWorkflowRunning ? 'Automasi sedang berlangsung' : 'Jalankan Cuci SMR untuk modul terpilih'}
-                onClick={handleRunLaundryAutomation}
-                disabled={workflow.selectedSerials.length === 0 || isWorkflowRunning}
-              >
-                <PlayIcon size={13} />
-                <span>{isWorkflowRunning ? 'Sedang Berjalan...' : 'Jalankan Automasi'}</span>
-              </button>
+              {(() => {
+                const isBusyRunning = isWorkflowRunning || isTriggering;
+                const buttonLabel = isWorkflowRunning
+                  ? 'Sedang Berjalan...'
+                  : isTriggering
+                  ? 'Memulai Automasi...'
+                  : 'Jalankan Automasi';
+
+                return (
+                  <button
+                    className={`btn ${isBusyRunning ? 'btn-running' : 'btn-suite-primary'} btn-action-full`}
+                    title={isBusyRunning ? 'Automasi sedang berlangsung / disiapkan' : 'Jalankan Cuci SMR untuk modul terpilih'}
+                    onClick={handleRunLaundryAutomation}
+                    disabled={workflow.selectedSerials.length === 0 || isBusyRunning}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      opacity: isBusyRunning ? 0.85 : 1,
+                      cursor: isBusyRunning ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    {isBusyRunning ? (
+                      <span
+                        style={{
+                          width: 12,
+                          height: 12,
+                          border: '2px solid currentColor',
+                          borderTopColor: 'transparent',
+                          borderRadius: '50%',
+                          display: 'inline-block',
+                          animation: 'spin 0.8s linear infinite'
+                        }}
+                      />
+                    ) : (
+                      <PlayIcon size={13} />
+                    )}
+                    <span>{buttonLabel}</span>
+                  </button>
+                );
+              })()}
               <button
                 className="btn-icon-danger"
                 title="Hapus Laundry Workflow"
