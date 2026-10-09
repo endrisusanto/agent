@@ -254,6 +254,17 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     return analysisRows.filter((r) => r.failed > 0 || r.status.toUpperCase() === 'FAIL');
   }, [analysisRows]);
 
+  // Set of serial numbers actively running in any active job
+  const busySerials = useMemo(() => {
+    const serials = new Set<string>();
+    activeJobs.forEach((j) => {
+      if ((j.status === 'Running' || j.status === 'Starting') && Array.isArray(j.devices)) {
+        j.devices.forEach((s) => serials.add(s));
+      }
+    });
+    return serials;
+  }, [activeJobs]);
+
   const handleToggleModule = (moduleName: string) => {
     const exists = workflow.selectedModules.includes(moduleName);
     const updated = exists
@@ -263,6 +274,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   };
 
   const handleToggleDevice = (serial: string) => {
+    if (isWorkflowRunning || busySerials.has(serial)) return;
     const exists = workflow.selectedSerials.includes(serial);
     const updated = exists
       ? workflow.selectedSerials.filter((s) => s !== serial)
@@ -271,12 +283,27 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   };
 
   const handleSelectAllDevices = () => {
-    const allSerials = matchingDevices.map((d) => d.serial);
-    const allSelected = allSerials.every((s) => workflow.selectedSerials.includes(s));
-    onUpdateWorkflow({
-      ...workflow,
-      selectedSerials: allSelected ? [] : allSerials,
-    });
+    if (isWorkflowRunning) return;
+    const availableDevices = matchingDevices.filter((d) => !busySerials.has(d.serial));
+    const allMatchingSerials = matchingDevices.map((d) => d.serial);
+    const allSelected = allMatchingSerials.length > 0 && allMatchingSerials.every((s) => workflow.selectedSerials.includes(s));
+
+    if (allSelected) {
+      // Keep only devices that are currently busy/locked
+      const kept = workflow.selectedSerials.filter((s) => busySerials.has(s) || !allMatchingSerials.includes(s));
+      onUpdateWorkflow({
+        ...workflow,
+        selectedSerials: kept,
+      });
+    } else {
+      // Select all available devices + keep currently selected
+      const toAdd = availableDevices.map((d) => d.serial);
+      const combined = Array.from(new Set([...workflow.selectedSerials, ...toAdd]));
+      onUpdateWorkflow({
+        ...workflow,
+        selectedSerials: combined,
+      });
+    }
   };
 
   const { showAlert } = useAlertModal();
@@ -957,7 +984,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                                   workflow.selectedSerials.includes(d.serial)
                                 )
                               }
-                              disabled={isWorkflowRunning}
+                              disabled={isWorkflowRunning || (matchingDevices.length > 0 && matchingDevices.every((d) => busySerials.has(d.serial)))}
                               onChange={handleSelectAllDevices}
                             />
                           </th>
@@ -970,23 +997,27 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                       <tbody>
                         {matchingDevices.map((dev) => {
                           const isChecked = workflow.selectedSerials.includes(dev.serial);
+                          const isDevRunning = busySerials.has(dev.serial);
+                          const isBlocked = isWorkflowRunning || isDevRunning;
                           const targetFp = analysisRows.find((r) => r.fingerprint)?.fingerprint || workflow.fingerprint;
                           const targetAp = workflow.ap_version || workflow.pda || analysisRows.find((r) => r.ap_version)?.ap_version;
                           const isFpMatch = isLoaded ? isDeviceFingerprintMatch(dev, targetFp, targetAp, workflow.pda) : true;
                           return (
                             <tr
                               key={dev.serial}
-                              className={`${isChecked ? 'row-selected' : ''} ${isWorkflowRunning ? 'is-readonly' : ''}`}
-                              onClick={() => !isWorkflowRunning && handleToggleDevice(dev.serial)}
-                              style={{ cursor: isWorkflowRunning ? 'default' : 'pointer' }}
+                              className={`${isChecked ? 'row-selected' : ''} ${isBlocked ? 'is-readonly row-blocked' : ''}`}
+                              onClick={() => !isBlocked && handleToggleDevice(dev.serial)}
+                              style={{ cursor: isBlocked ? 'not-allowed' : 'pointer' }}
+                              title={isDevRunning ? 'Perangkat sedang berjalan dalam automasi' : isWorkflowRunning ? 'Automasi workflow ini sedang berjalan' : undefined}
                             >
                               <td onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   className="checkbox-custom"
                                   checked={isChecked}
-                                  disabled={isWorkflowRunning}
-                                  onChange={() => !isWorkflowRunning && handleToggleDevice(dev.serial)}
+                                  disabled={isBlocked}
+                                  onChange={() => !isBlocked && handleToggleDevice(dev.serial)}
+                                  title={isDevRunning ? 'Perangkat sedang berjalan dalam automasi' : isWorkflowRunning ? 'Automasi workflow ini sedang berjalan' : undefined}
                                 />
                               </td>
                               <td className="mono font-medium">{dev.pcId}</td>
@@ -1013,9 +1044,9 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
                               <td className="mono">{dev.serial}</td>
                               <td>
                                 <span
-                                  className={`badge badge-xs ${dev.busy ? 'badge-busy' : 'badge-ready'}`}
+                                  className={`badge badge-xs ${isDevRunning || dev.busy ? 'badge-busy' : 'badge-ready'}`}
                                 >
-                                  {dev.busy ? dev.busy_reason || 'BUSY' : 'READY'}
+                                  {isDevRunning ? 'RUNNING' : dev.busy ? dev.busy_reason || 'BUSY' : 'READY'}
                                 </span>
                               </td>
                             </tr>
