@@ -166,13 +166,13 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     return allDevices.filter((d) => isModelMatch(d.model, workflow.model));
   }, [allDevices, workflow.model]);
 
-  // Combined execution results for this specific workflow instance
   const workflowResults = useMemo(() => {
     const allJobs = [...activeJobs, ...jobHistory];
     return allJobs.filter((job) => {
       if (job.workflow_id && job.workflow_id === workflow.id) return true;
+      if (job.workflow_id && job.workflow_id !== workflow.id) return false;
       if (workflow.lastRunId && job.run_id === workflow.lastRunId) return true;
-      if (workflow.selectedZip && (job.laundry_zip_path === workflow.selectedZip || job.zip_file === workflow.selectedZip)) {
+      if (!workflow.lastRunId && workflow.selectedZip && (job.laundry_zip_path === workflow.selectedZip || job.zip_file === workflow.selectedZip)) {
         if (workflow.selectedSerials.length > 0 && Array.isArray(job.devices) && job.devices.some((s) => workflow.selectedSerials.includes(s))) {
           return true;
         }
@@ -184,30 +184,23 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   const [isTriggering, setIsTriggering] = useState(false);
   const triggeringTimerRef = useRef<number | null>(null);
 
-  // Active test run job specifically for this workflow instance
+  // ponytail: strict ownership — if a job has workflow_id, only that workflow owns it
   const activeJob = useMemo(() => {
     return activeJobs.find((j) => {
-      const isStatusRunning = j.status === 'Running' || j.status === 'Starting';
-      if (!isStatusRunning) return false;
+      if (j.status !== 'Running' && j.status !== 'Starting') return false;
 
-      // 1. Exact match by workflow_id
-      if (j.workflow_id && j.workflow_id === workflow.id) {
-        return true;
-      }
+      if (j.workflow_id && j.workflow_id === workflow.id) return true;
+      if (j.workflow_id && j.workflow_id !== workflow.id) return false;
 
-      // 2. Match by lastRunId if set
-      if (workflow.lastRunId && j.run_id === workflow.lastRunId) {
-        return true;
-      }
+      if (workflow.lastRunId && j.run_id === workflow.lastRunId) return true;
 
-      // 3. Match by matching physical device serials: if any selected device for this workflow is executing in this job
-      if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
-        return true;
-      }
-
-      // 4. Fallback: match by selected zip
-      if (workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
-        return true;
+      if (!workflow.lastRunId) {
+        if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
+          return true;
+        }
+        if (workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
+          return true;
+        }
       }
 
       return false;
@@ -232,26 +225,16 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
   const isWorkflowRunning = Boolean(activeJob);
 
-  // Latest finished test run job specifically for this workflow instance
   const latestFinishedJob = useMemo(() => {
     return jobHistory.find((j) => {
-      // 1. Exact match by workflow_id
-      if (j.workflow_id && j.workflow_id === workflow.id) {
-        return true;
-      }
-
-      // 2. Match by lastRunId if set
-      if (workflow.lastRunId && j.run_id === workflow.lastRunId) {
-        return true;
-      }
-
-      // 3. Fallback: match by selected zip AND selected devices
-      if (!j.workflow_id && workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
+      if (j.workflow_id && j.workflow_id === workflow.id) return true;
+      if (j.workflow_id && j.workflow_id !== workflow.id) return false;
+      if (workflow.lastRunId && j.run_id === workflow.lastRunId) return true;
+      if (!workflow.lastRunId && workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
         if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
           return true;
         }
       }
-
       return false;
     });
   }, [jobHistory, workflow.id, workflow.lastRunId, workflow.selectedZip, workflow.selectedSerials]);
