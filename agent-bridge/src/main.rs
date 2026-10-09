@@ -528,11 +528,15 @@ async fn run_bridge_worker(state: AppState) {
                                                             let run_id_stat = run_id.clone();
                                                             let run_id_fin = run_id.clone();
                                                             let test_type_stat = payload.test_type.clone();
+                                                            let workflow_id_stat = payload.workflow_id.clone();
+                                                            let laundry_zip_stat = payload.laundry_zip_path.clone();
 
                                                             // Immediately announce run start
                                                             send_ws_message(Message::Text(json!({
                                                                 "type": "SUITE_STATUS_UPDATE",
                                                                 "run_id": run_id,
+                                                                "workflow_id": payload.workflow_id,
+                                                                "laundry_zip_path": payload.laundry_zip_path,
                                                                 "test_type": payload.test_type,
                                                                 "suite": payload.test_type,
                                                                 "status": "Running",
@@ -554,6 +558,8 @@ async fn run_bridge_worker(state: AppState) {
                                                                     send_ws_message(Message::Text(json!({
                                                                         "type": "SUITE_STATUS_UPDATE",
                                                                         "run_id": run_id_stat,
+                                                                        "workflow_id": workflow_id_stat,
+                                                                        "laundry_zip_path": laundry_zip_stat,
                                                                         "test_type": test_type_stat,
                                                                         "suite": suite,
                                                                         "status": status,

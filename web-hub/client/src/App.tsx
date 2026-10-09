@@ -32,6 +32,7 @@ export const App: React.FC = () => {
     laundryAnalysis,
     runSuite,
     cancelRun,
+    cancellingRunIds,
     resetBusy,
     setDeviceLamp,
     analyzeLaundry,
@@ -264,6 +265,7 @@ export const App: React.FC = () => {
             activeJobs={activeJobs}
             jobHistory={jobHistory}
             devices={devices}
+            cancellingRunIds={cancellingRunIds}
             onCancelJob={cancelRun}
             onDeleteRun={deleteHistoryItem}
           />

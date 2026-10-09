@@ -68,6 +68,7 @@ pub struct LaundryResultInfo {
 #[allow(dead_code)]
 pub struct RunSuitePayload {
     pub run_id: Option<String>,
+    pub workflow_id: Option<String>,
     pub auto_root: Option<String>,
     #[serde(default)]
     pub test_type: String,

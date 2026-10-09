@@ -15,6 +15,7 @@ export interface LaundryWorkflowState {
   plan?: string;
   fingerprint?: string;
   cachedRows?: LaundryRow[];
+  lastRunId?: string;
   isExpanded?: boolean;
   isLaundryExpanded?: boolean;
   isDevicesExpanded?: boolean;
@@ -165,56 +166,73 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     return allDevices.filter((d) => isModelMatch(d.model, workflow.model));
   }, [allDevices, workflow.model]);
 
-  // Combined execution results for this model
+  // Combined execution results for this specific workflow instance
   const workflowResults = useMemo(() => {
     const allJobs = [...activeJobs, ...jobHistory];
-    const serialSet = new Set(matchingDevices.map((d) => d.serial));
     return allJobs.filter((job) => {
-      // Match by device serial
-      if (Array.isArray(job.devices) && job.devices.some((s) => serialSet.has(s))) {
-        return true;
-      }
-      // Match by model name
-      if (workflow.model) {
-        if (job.summary?.test_type && isModelMatch(job.summary.test_type, workflow.model)) return true;
-        if (job.test_type && isModelMatch(job.test_type, workflow.model)) return true;
-        if (job.suite && isModelMatch(job.suite, workflow.model)) return true;
+      if (job.workflow_id && job.workflow_id === workflow.id) return true;
+      if (workflow.lastRunId && job.run_id === workflow.lastRunId) return true;
+      if (workflow.selectedZip && (job.laundry_zip_path === workflow.selectedZip || job.zip_file === workflow.selectedZip)) {
+        if (workflow.selectedSerials.length > 0 && Array.isArray(job.devices) && job.devices.some((s) => workflow.selectedSerials.includes(s))) {
+          return true;
+        }
       }
       return false;
     });
-  }, [activeJobs, jobHistory, matchingDevices, workflow.model]);
+  }, [activeJobs, jobHistory, workflow.id, workflow.lastRunId, workflow.selectedZip, workflow.selectedSerials]);
 
-  // Active test run job specifically for this workflow
+  // Active test run job specifically for this workflow instance
   const activeJob = useMemo(() => {
-    const serialSet = new Set(matchingDevices.map((d) => d.serial));
     return activeJobs.find((j) => {
       const isStatusRunning = j.status === 'Running' || j.status === 'Starting';
       if (!isStatusRunning) return false;
-      if (Array.isArray(j.devices) && j.devices.some((s) => serialSet.has(s))) return true;
-      if (workflow.model) {
-        if (j.summary?.test_type && isModelMatch(j.summary.test_type, workflow.model)) return true;
-        if (j.test_type && isModelMatch(j.test_type, workflow.model)) return true;
-        if (j.suite && isModelMatch(j.suite, workflow.model)) return true;
+
+      // 1. Exact match by workflow_id
+      if (j.workflow_id && j.workflow_id === workflow.id) {
+        return true;
       }
+
+      // 2. Match by lastRunId if set
+      if (workflow.lastRunId && j.run_id === workflow.lastRunId) {
+        return true;
+      }
+
+      // 3. Fallback: match by selected zip AND selected devices (only if no workflow_id was assigned)
+      if (!j.workflow_id && workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
+        if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
+          return true;
+        }
+      }
+
       return false;
     });
-  }, [activeJobs, matchingDevices, workflow.model]);
+  }, [activeJobs, workflow.id, workflow.lastRunId, workflow.selectedZip, workflow.selectedSerials]);
 
   const isWorkflowRunning = Boolean(activeJob);
 
-  // Latest finished test run job specifically for this workflow
+  // Latest finished test run job specifically for this workflow instance
   const latestFinishedJob = useMemo(() => {
-    const serialSet = new Set(matchingDevices.map((d) => d.serial));
     return jobHistory.find((j) => {
-      if (Array.isArray(j.devices) && j.devices.some((s) => serialSet.has(s))) return true;
-      if (workflow.model) {
-        if (j.summary?.test_type && isModelMatch(j.summary.test_type, workflow.model)) return true;
-        if (j.test_type && isModelMatch(j.test_type, workflow.model)) return true;
-        if (j.suite && isModelMatch(j.suite, workflow.model)) return true;
+      // 1. Exact match by workflow_id
+      if (j.workflow_id && j.workflow_id === workflow.id) {
+        return true;
       }
+
+      // 2. Match by lastRunId if set
+      if (workflow.lastRunId && j.run_id === workflow.lastRunId) {
+        return true;
+      }
+
+      // 3. Fallback: match by selected zip AND selected devices
+      if (!j.workflow_id && workflow.selectedZip && (j.laundry_zip_path === workflow.selectedZip || j.zip_file === workflow.selectedZip)) {
+        if (workflow.selectedSerials.length > 0 && Array.isArray(j.devices) && j.devices.some((s) => workflow.selectedSerials.includes(s))) {
+          return true;
+        }
+      }
+
       return false;
     });
-  }, [jobHistory, matchingDevices, workflow.model]);
+  }, [jobHistory, workflow.id, workflow.lastRunId, workflow.selectedZip, workflow.selectedSerials]);
 
   // Determine active analysis rows (uses live laundryAnalysis or fallback to cachedRows)
   const analysisRows: LaundryRow[] = useMemo(() => {
@@ -333,7 +351,11 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     }
 
     const laundryTestType = `Laundry ${detectedPlanName}`;
+    const generatedRunId = `run-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
     onRunSuite(targetPcId, {
+      run_id: generatedRunId,
+      workflow_id: workflow.id,
       test_type: laundryTestType,
       target_model: workflow.model,
       laundry_zip_path: workflow.selectedZip,
@@ -345,7 +367,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       timeout_secs: 86400,
     });
 
-    onUpdateWorkflow({ ...workflow, isExpanded: false });
+    onUpdateWorkflow({ ...workflow, isExpanded: false, lastRunId: generatedRunId });
   };
 
   const planName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);

@@ -50,6 +50,8 @@ export interface ActiveJobItem {
   startedAt: number;
   devices: string[];
   elapsed_secs: number;
+  workflow_id?: string;
+  laundry_zip_path?: string;
   summary?: {
     run_id: string;
     test_type: string;
@@ -96,6 +98,7 @@ export interface LaundryWorkflowState {
   plan?: string;
   fingerprint?: string;
   cachedRows?: LaundryRow[];
+  lastRunId?: string;
   isExpanded?: boolean;
   isLaundryExpanded?: boolean;
   isDevicesExpanded?: boolean;
@@ -158,6 +161,7 @@ export function useFleetWebSocket() {
     transferModalExpanded: true,
   });
   const [transfers, setTransfers] = useState<ActiveTransferItem[]>([]);
+  const [cancellingRunIds, setCancellingRunIds] = useState<string[]>([]);
   const [laundryAnalysis, setLaundryAnalysis] = useState<{
     pcId: string;
     zip_path: string;
@@ -232,6 +236,12 @@ export function useFleetWebSocket() {
 
             setActiveJobs(enrichedActive);
             setJobHistory(enrichedHistory);
+            // Clear out any cancellingRunIds that are no longer active or have completed
+            setCancellingRunIds((prev) =>
+              prev.filter((id) =>
+                enrichedActive.some((j) => j.run_id === id && j.status !== 'Cancelled' && j.status !== 'Finished' && j.status !== 'Failed')
+              )
+            );
             break;
           }
 
@@ -333,6 +343,7 @@ export function useFleetWebSocket() {
   }, []);
 
   const cancelRun = useCallback((pcId: string, run_id: string) => {
+    setCancellingRunIds((prev) => (prev.includes(run_id) ? prev : [...prev, run_id]));
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'EXEC_CANCEL_RUN', pcId, run_id }));
     }
@@ -470,6 +481,7 @@ export function useFleetWebSocket() {
     setLaundryAnalysis,
     runSuite,
     cancelRun,
+    cancellingRunIds,
     resetBusy,
     setDeviceLamp,
     analyzeLaundry,

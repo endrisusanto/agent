@@ -7,6 +7,7 @@ interface RunningWorkflowAccordionProps {
   activeJobs: ActiveJobItem[];
   jobHistory?: ActiveJobItem[];
   devices?: DeviceItem[];
+  cancellingRunIds?: string[];
   onCancelJob: (pcId: string, run_id: string) => void;
   onDeleteRun?: (run_id: string, pcId?: string) => void;
 }
@@ -14,9 +15,10 @@ interface RunningWorkflowAccordionProps {
 const SingleWorkflowRunner: React.FC<{
   job: ActiveJobItem;
   devices?: DeviceItem[];
+  cancellingRunIds?: string[];
   onCancelJob: (pcId: string, run_id: string) => void;
   onDeleteRun?: (run_id: string, pcId?: string) => void;
-}> = ({ job, devices, onCancelJob, onDeleteRun }) => {
+}> = ({ job, devices, cancellingRunIds = [], onCancelJob, onDeleteRun }) => {
   const isRunning = job.status === 'Running' || job.status === 'Starting';
   const isFinished = job.status === 'Finished' || job.status === 'Test Done';
   const isFailed = job.status === 'Failed';
@@ -196,8 +198,11 @@ const SingleWorkflowRunner: React.FC<{
     );
   };
 
+  const isCancelling = (cancellingRunIds || []).includes(job.run_id);
   const isCancelled = job.status === 'Cancelled';
-  const statusBadgeClass = isRunning
+  const statusBadgeClass = isCancelling
+    ? 'badge-busy'
+    : isRunning
     ? 'badge-running'
     : isCancelled
     ? 'badge-busy'
@@ -263,7 +268,7 @@ const SingleWorkflowRunner: React.FC<{
             {/* Status, Model & Firmware Badges, PC ID */}
             <div className="workflow-run-meta-badges">
               <span className={`badge ${statusBadgeClass}`} style={{ fontWeight: 700, fontSize: '0.725rem' }}>
-                {isRunning ? 'RUNNING' : isCancelled ? 'CANCELLED' : 'FINISHED'}
+                {isCancelling ? 'CANCELLING...' : isRunning ? 'RUNNING' : isCancelled ? 'CANCELLED' : 'FINISHED'}
               </span>
               {targetModel && <span className="badge badge-pc">{targetModel}</span>}
               {apVersion && apVersion !== '-' && <span className="badge badge-pc mono-cell">{apVersion}</span>}
@@ -311,17 +316,44 @@ const SingleWorkflowRunner: React.FC<{
           {isRunning && (
             <button
               className="btn btn-danger btn-xs btn-cancel-flow"
-              onClick={() => onCancelJob(job.pcId, job.run_id)}
-              title="Cancel Run"
+              onClick={() => !isCancelling && onCancelJob(job.pcId, job.run_id)}
+              title={isCancelling ? "Sedang membatalkan proses run..." : "Cancel Run"}
+              disabled={isCancelling}
+              style={{
+                opacity: isCancelling ? 0.75 : 1,
+                cursor: isCancelling ? 'not-allowed' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem'
+              }}
             >
-              <StopIcon size={12} />
-              <span>Cancel Run</span>
+              {isCancelling ? (
+                <>
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      border: '2px solid currentColor',
+                      borderTopColor: 'transparent',
+                      borderRadius: '50%',
+                      display: 'inline-block',
+                      animation: 'spin 0.8s linear infinite'
+                    }}
+                  />
+                  <span>Membatalkan...</span>
+                </>
+              ) : (
+                <>
+                  <StopIcon size={12} />
+                  <span>Cancel Run</span>
+                </>
+              )}
             </button>
           )}
           <button
             className="btn-icon-danger"
             onClick={() => {
-              if (isRunning) {
+              if (isRunning && !isCancelling) {
                 onCancelJob(job.pcId, job.run_id);
               }
               if (onDeleteRun) {
@@ -482,6 +514,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
   activeJobs,
   jobHistory = [],
   devices,
+  cancellingRunIds = [],
   onCancelJob,
   onDeleteRun,
 }) => {
@@ -603,6 +636,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
               key={job.run_id}
               job={job}
               devices={devices}
+              cancellingRunIds={cancellingRunIds}
               onCancelJob={onCancelJob}
               onDeleteRun={onDeleteRun}
             />

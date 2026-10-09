@@ -54,10 +54,6 @@ pub fn cancel_suite_run(run_id: &str) -> bool {
     for pid in &pids {
         terminate_process_tree(*pid);
     }
-    // Force kill tradefed processes to ensure immediate stoppage
-    let _ = Command::new("pkill").args(["-9", "-f", "cts-tradefed"]).output();
-    let _ = Command::new("pkill").args(["-9", "-f", "gts-tradefed"]).output();
-    let _ = Command::new("pkill").args(["-9", "-f", "sts-tradefed"]).output();
     true
 }
 
