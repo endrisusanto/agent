@@ -47,7 +47,7 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
   }, [activeJobs, selectedRunId, allRuns.length]);
 
   const activeJob = allRuns.find((j) => j.run_id === currentRunId) || allRuns[0];
-  const isRunning = activeJobs.some((j) => j.run_id === activeJob?.run_id);
+  const isRunning = activeJobs.some((j) => j.run_id === activeJob?.run_id && (j.status === 'Running' || j.status === 'Starting'));
 
   const [, setModalTick] = useState(0);
   useEffect(() => {
@@ -105,7 +105,7 @@ export const TerminalLogsModal: React.FC<TerminalLogsModalProps> = ({
                   aria-label="Pilih Sesi Log Terminal"
                 >
                   {allRuns.map((run) => {
-                    const isRunActive = activeJobs.some((j) => j.run_id === run.run_id);
+                    const isRunActive = activeJobs.some((j) => j.run_id === run.run_id && (j.status === 'Running' || j.status === 'Starting'));
                     const devStr = Array.isArray(run.devices) ? run.devices.join(', ') : (run.devices || '');
                     const label = `[${isRunActive ? 'RUNNING' : (run.status || 'FINISHED').toUpperCase()}] ${run.test_type || run.suite || 'Workflow'} · ${run.pcId || 'Node'} (${devStr || run.run_id})`;
                     return (

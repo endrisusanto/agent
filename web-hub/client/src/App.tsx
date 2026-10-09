@@ -265,6 +265,7 @@ export const App: React.FC = () => {
             jobHistory={jobHistory}
             devices={devices}
             onCancelJob={cancelRun}
+            onDeleteRun={deleteHistoryItem}
           />
         </div>
 

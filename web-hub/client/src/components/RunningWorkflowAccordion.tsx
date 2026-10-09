@@ -8,14 +8,15 @@ interface RunningWorkflowAccordionProps {
   jobHistory?: ActiveJobItem[];
   devices?: DeviceItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
+  onDeleteRun?: (run_id: string, pcId?: string) => void;
 }
 
 const SingleWorkflowRunner: React.FC<{
   job: ActiveJobItem;
   devices?: DeviceItem[];
   onCancelJob: (pcId: string, run_id: string) => void;
-  onDismiss: (run_id: string) => void;
-}> = ({ job, devices, onCancelJob, onDismiss }) => {
+  onDeleteRun?: (run_id: string, pcId?: string) => void;
+}> = ({ job, devices, onCancelJob, onDeleteRun }) => {
   const isRunning = job.status === 'Running' || job.status === 'Starting';
   const isFinished = job.status === 'Finished' || job.status === 'Test Done';
   const isFailed = job.status === 'Failed';
@@ -319,9 +320,16 @@ const SingleWorkflowRunner: React.FC<{
           )}
           <button
             className="btn-icon-danger"
-            onClick={() => onDismiss(job.run_id)}
-            title="Tutup / Dismiss Accordion Log Run ini"
-            aria-label="Dismiss Run Accordion"
+            onClick={() => {
+              if (isRunning) {
+                onCancelJob(job.pcId, job.run_id);
+              }
+              if (onDeleteRun) {
+                onDeleteRun(job.run_id, job.pcId);
+              }
+            }}
+            title="Hapus / Delete Run & Log ini secara permanen"
+            aria-label="Delete Run"
           >
             <TrashIcon size={13} />
           </button>
@@ -475,9 +483,9 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
   jobHistory = [],
   devices,
   onCancelJob,
+  onDeleteRun,
 }) => {
   const [isMasterOpen, setIsMasterOpen] = useState<boolean>(false);
-  const [dismissedRunIds, setDismissedRunIds] = useState<string[]>([]);
 
   // Maintain list of all runs: active runs + finished runs (newest first)
   const displayRuns = useMemo(() => {
@@ -505,9 +513,8 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
       if (!aRunning && bRunning) return 1;
       return (b.startedAt || 0) - (a.startedAt || 0);
     });
-    // Filter out dismissed runs
-    return all.filter((j) => !dismissedRunIds.includes(j.run_id));
-  }, [activeJobs, jobHistory, dismissedRunIds]);
+    return all;
+  }, [activeJobs, jobHistory]);
 
   const activeCount = useMemo(() => {
     return displayRuns.filter((j) => j.status === 'Running' || j.status === 'Starting').length;
@@ -529,10 +536,6 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
     if (activeJobsList.length === 0) return 0;
     return Math.max(...activeJobsList.map((j) => (j.startedAt ? Math.max(0, Math.floor((Date.now() - j.startedAt) / 1000)) : (j.elapsed_secs || 0))));
   }, [displayRuns, masterTick]);
-
-  const handleDismiss = (run_id: string) => {
-    setDismissedRunIds((prev) => [...prev, run_id]);
-  };
 
   if (displayRuns.length === 0) {
     return null;
@@ -583,16 +586,6 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
               ⏱ {formatDurationHms(activeElapsed)}
             </span>
           )}
-          {dismissedRunIds.length > 0 && (
-            <button
-              className="btn-icon"
-              onClick={() => setDismissedRunIds([])}
-              title={`Restore ${dismissedRunIds.length} closed run(s)`}
-              aria-label="Restore Closed Runs"
-            >
-              <ResetIcon size={14} />
-            </button>
-          )}
           <span
             className="workflow-count-badge"
             title={`${finishedCount} Selesai / ${displayRuns.length} Total Run`}
@@ -611,7 +604,7 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
               job={job}
               devices={devices}
               onCancelJob={onCancelJob}
-              onDismiss={handleDismiss}
+              onDeleteRun={onDeleteRun}
             />
           ))}
         </div>

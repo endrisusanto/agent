@@ -448,6 +448,78 @@ const WORKFLOWS_FILE = process.env.WORKFLOWS_FILE || path.join(getAutoRoot(), 'w
 const FALLBACK_WORKFLOWS_FILE = path.join(__dirname, '../workflows_state.json');
 const UI_STATE_FILE = process.env.UI_STATE_FILE || '/tmp/gba_ui_state.json';
 const TRANSFERS_FILE = process.env.TRANSFERS_FILE || '/tmp/gba_transfers.json';
+const DELETED_RUNS_FILE = process.env.DELETED_RUNS_FILE || '/tmp/gba_deleted_runs.json';
+
+let deletedRunIds = new Set<string>();
+
+function loadDeletedRunsFromDisk(): void {
+  try {
+    if (fs.existsSync(DELETED_RUNS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(DELETED_RUNS_FILE, 'utf8'));
+      if (Array.isArray(parsed)) {
+        deletedRunIds = new Set(parsed);
+      }
+    }
+  } catch (err) {
+    console.error('[Hub] Failed to load deleted runs:', err);
+  }
+}
+
+function saveDeletedRunsToDisk(): void {
+  try {
+    fs.writeFileSync(DELETED_RUNS_FILE, JSON.stringify(Array.from(deletedRunIds), null, 2), 'utf8');
+  } catch (err) {
+    console.error('[Hub] Failed to save deleted runs:', err);
+  }
+}
+
+function deleteRunCompletely(run_id: string): void {
+  if (!run_id) return;
+  deletedRunIds.add(run_id);
+
+  // 1. If in activeJobs, cancel on bridge and delete
+  const activeJob = activeJobs.get(run_id);
+  if (activeJob) {
+    activeJob.status = 'CANCELLED';
+    if (activeJob.pcId) {
+      sendToBridge(activeJob.pcId, { type: 'CMD_CANCEL_RUN', run_id });
+    }
+    activeJobs.delete(run_id);
+  }
+
+  // 2. If in jobHistory, remove and record zip basename
+  const idx = jobHistory.findIndex((j) => j.run_id === run_id);
+  if (idx !== -1) {
+    const item = jobHistory[idx];
+    if (item.zip_file) {
+      const bname = path.basename(item.zip_file, '.zip');
+      deletedRunIds.add(bname);
+    }
+    jobHistory.splice(idx, 1);
+  }
+
+  saveDeletedRunsToDisk();
+  broadcastFleetState();
+}
+
+function clearAllHistoryCompletely(): void {
+  for (const j of jobHistory) {
+    deletedRunIds.add(j.run_id);
+    if (j.zip_file) {
+      deletedRunIds.add(path.basename(j.zip_file, '.zip'));
+    }
+  }
+  for (const [id, j] of activeJobs.entries()) {
+    deletedRunIds.add(id);
+    if (j.pcId) {
+      sendToBridge(j.pcId, { type: 'CMD_CANCEL_RUN', run_id: id });
+    }
+  }
+  activeJobs.clear();
+  jobHistory.length = 0;
+  saveDeletedRunsToDisk();
+  broadcastFleetState();
+}
 
 let serverUiState: UnifiedUiState = {
   standbyExpanded: false,
@@ -494,6 +566,7 @@ function saveWorkflowsToDisk(wfs: LaundryWorkflowState[]): void {
 }
 
 function loadUiStateFromDisk(): void {
+  loadDeletedRunsFromDisk();
   try {
     if (fs.existsSync(UI_STATE_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(UI_STATE_FILE, 'utf8'));
@@ -896,7 +969,11 @@ function initJobHistoryFromDisk(): void {
         const hasZip = fs.existsSync(zipFile);
 
         const runIdMatch = entry.name.match(/run-([0-9]+)/) || entry.name.match(/_([0-9]{10})_/);
-        const runId = runIdMatch ? runIdMatch[1] : entry.name;
+        const runId = runIdMatch ? (runIdMatch[0].startsWith('_') ? runIdMatch[1] : runIdMatch[0]) : entry.name;
+
+        if (deletedRunIds.has(runId) || deletedRunIds.has(entry.name) || deletedRunIds.has(`${entry.name}.zip`)) {
+          continue;
+        }
 
         if (jobHistory.some(j => j.run_id === runId || (j.zip_file && j.zip_file.includes(entry.name)))) {
           continue;
@@ -1085,19 +1162,13 @@ app.get('/api/results/list', (_req, res) => {
 // REST: Delete Single Execution History Item
 app.delete('/api/history/:run_id', (req, res) => {
   const { run_id } = req.params;
-  const idx = jobHistory.findIndex((j) => j.run_id === run_id);
-  if (idx !== -1) {
-    jobHistory.splice(idx, 1);
-    broadcastFleetState();
-    return res.json({ success: true, deleted: run_id });
-  }
-  return res.status(404).json({ error: 'Run ID not found' });
+  deleteRunCompletely(run_id);
+  return res.json({ success: true, deleted: run_id });
 });
 
 // REST: Clear All Execution History
 app.delete('/api/history', (_req, res) => {
-  jobHistory.length = 0;
-  broadcastFleetState();
+  clearAllHistoryCompletely();
   return res.json({ success: true, message: 'Execution history cleared' });
 });
 
@@ -1354,12 +1425,15 @@ wssBridge.on('connection', (ws, req) => {
 
         case 'SUITE_STATUS_UPDATE': {
           const { run_id, suite, status, elapsed_secs, devices: devList, test_type } = msg;
+          if (!run_id || deletedRunIds.has(run_id)) break;
+
+          const hist = jobHistory.find(j => j.run_id === run_id);
+          if (hist && (hist.status === 'CANCELLED' || hist.status === 'Finished' || hist.status === 'Failed' || hist.status === 'Test Done')) {
+            break;
+          }
+
           let job = activeJobs.get(run_id);
           if (!job) {
-            const hist = jobHistory.find(j => j.run_id === run_id);
-            if (hist && (hist.status === 'CANCELLED' || hist.status === 'Finished' || hist.status === 'Failed')) {
-              break;
-            }
             job = {
               run_id,
               pcId: registeredPcId,
@@ -1385,7 +1459,11 @@ wssBridge.on('connection', (ws, req) => {
 
         case 'RUN_FINISHED': {
           const { run_id, summary, zip_file, zip_files, exit_code } = msg;
-          const job = activeJobs.get(run_id);
+          if (!run_id) break;
+          let job = activeJobs.get(run_id);
+          if (!job) {
+            job = jobHistory.find(j => j.run_id === run_id);
+          }
           if (job) {
             if (job.status !== 'CANCELLED') {
               job.status = exit_code === 0 ? 'Finished' : 'Failed';
@@ -1544,18 +1622,20 @@ wssUi.on('connection', (ws) => {
             if (job) {
               job.status = 'CANCELLED';
               job.recentLogs.push(`[Hub] Flow run ${run_id} cancelled by user.`);
-              broadcastFleetState();
-              setTimeout(() => {
-                activeJobs.delete(run_id);
-                const existingIdx = jobHistory.findIndex(j => j.run_id === run_id);
-                if (existingIdx >= 0) {
-                  jobHistory[existingIdx] = { ...job, recentLogs: [...job.recentLogs] };
-                } else {
-                  jobHistory.unshift({ ...job, recentLogs: [...job.recentLogs] });
-                }
-                broadcastFleetState();
-              }, 1200);
+              activeJobs.delete(run_id);
+              const existingIdx = jobHistory.findIndex(j => j.run_id === run_id);
+              if (existingIdx >= 0) {
+                jobHistory[existingIdx] = { ...job, recentLogs: [...job.recentLogs] };
+              } else {
+                jobHistory.unshift({ ...job, recentLogs: [...job.recentLogs] });
+              }
+            } else {
+              const hist = jobHistory.find(j => j.run_id === run_id);
+              if (hist) {
+                hist.status = 'CANCELLED';
+              }
             }
+            broadcastFleetState();
           }
           break;
         }
@@ -1612,19 +1692,15 @@ wssUi.on('connection', (ws) => {
         }
 
         case 'EXEC_CLEAR_HISTORY': {
-          jobHistory.length = 0;
-          broadcastFleetState();
+          clearAllHistoryCompletely();
           break;
         }
 
+        case 'EXEC_DELETE_RUN':
         case 'EXEC_DELETE_HISTORY_ITEM': {
           const { run_id } = msg;
           if (run_id) {
-            const idx = jobHistory.findIndex(j => j.run_id === run_id);
-            if (idx !== -1) {
-              jobHistory.splice(idx, 1);
-              broadcastFleetState();
-            }
+            deleteRunCompletely(run_id);
           }
           break;
         }

@@ -188,6 +188,8 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   const activeJob = useMemo(() => {
     const serialSet = new Set(matchingDevices.map((d) => d.serial));
     return activeJobs.find((j) => {
+      const isStatusRunning = j.status === 'Running' || j.status === 'Starting';
+      if (!isStatusRunning) return false;
       if (Array.isArray(j.devices) && j.devices.some((s) => serialSet.has(s))) return true;
       if (workflow.model) {
         if (j.summary?.test_type && isModelMatch(j.summary.test_type, workflow.model)) return true;
@@ -472,13 +474,15 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
           if (fname.includes('GTS')) sName = 'GTS';
           else if (fname.includes('STS')) sName = 'STS';
 
+          const isJobFinished = job.status === 'Finished' || job.status === 'Test Done' || !activeJobs.some(a => a.run_id === job.run_id && (a.status === 'Running' || a.status === 'Starting'));
+
           list.push({
             filename: fname,
             path: z,
             plan: 'SMR',
             suite: sName,
             test_type: `SMR / ${sName}`,
-            status: job.status,
+            status: isJobFinished ? 'Finished' : job.status,
             run_id: job.run_id,
             modifiedAt: job.startedAt,
             isIndividualSuite: true,
