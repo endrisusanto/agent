@@ -588,57 +588,89 @@ app.get('/api/preflight/list', (_req, res) => {
 });
 
 app.get('/api/sync/file', (req, res) => {
-  const reqPath = String(req.query.path || '').trim().replace(/^\/+/, '');
+  let reqPath = String(req.query.path || '').trim();
   if (!reqPath) {
     return res.status(400).send('Missing path parameter');
   }
 
-  const autoRoot = getAutoRoot();
-
-  // 1. Direct file match
-  const fullTarget = path.join(autoRoot, reqPath);
-  if (fs.existsSync(fullTarget) && fs.statSync(fullTarget).isFile()) {
-    const filename = path.basename(fullTarget);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('X-Filename', filename);
-    return res.sendFile(fullTarget);
+  // Strip leading AUTO prefix or absolute path down to relative suite path
+  const autoMatch = reqPath.match(/(?:^|\/)(?:auto|AUTO)\/(.+)$/);
+  if (autoMatch) {
+    reqPath = autoMatch[1];
+  } else {
+    reqPath = reqPath.replace(/^\/+/, '');
   }
 
-  // 2. Search for matching .zip file in parent folder or directory
-  const parentDir = path.dirname(fullTarget);
-  const candidatesDirs = [parentDir, fullTarget].filter((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
+  const primaryRoot = getAutoRoot();
+  const candidateRoots = [
+    primaryRoot,
+    '/auto',
+    '/run/media/endri-pro/BINARY_HDD/AUTO',
+    '/run/media/endri-pro/BINARY_HDD1/AUTO',
+    '/home/gba/Desktop/GBA/AUTO',
+  ].filter((r, idx, arr): r is string => Boolean(r && fs.existsSync(r) && arr.indexOf(r) === idx));
 
-  for (const cDir of candidatesDirs) {
-    try {
-      const files = fs.readdirSync(cDir);
-      const zipFiles = files.filter((f) => f.toLowerCase().endsWith('.zip'));
-      if (zipFiles.length > 0) {
-        const suitePrefix = path.basename(reqPath).toLowerCase().replace(/android-/, '');
-        const bestZip = zipFiles.find((f) => f.toLowerCase().includes(suitePrefix)) || zipFiles[0];
-        const zipFullPath = path.join(cDir, bestZip);
-        res.setHeader('Content-Disposition', `attachment; filename="${bestZip}"`);
-        res.setHeader('X-Filename', bestZip);
-        res.setHeader('Content-Type', 'application/zip');
-        return res.sendFile(zipFullPath);
-      }
-    } catch (_) {}
+  console.log(`[Hub Sync] Request for: "${reqPath}". Searching roots: ${candidateRoots.join(', ')}`);
+
+  for (const root of candidateRoots) {
+    const fullTarget = path.join(root, reqPath);
+
+    // 1. Direct file match
+    if (fs.existsSync(fullTarget) && fs.statSync(fullTarget).isFile()) {
+      const filename = path.basename(fullTarget);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('X-Filename', filename);
+      console.log(`[Hub Sync] Serving direct file: ${fullTarget}`);
+      return res.sendFile(fullTarget);
+    }
+
+    // 2. Search for matching .zip file in parent folder or target directory
+    const parentDir = path.dirname(fullTarget);
+    const candidateDirs = [parentDir, fullTarget].filter((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
+
+    for (const cDir of candidateDirs) {
+      try {
+        const files = fs.readdirSync(cDir);
+        const zipFiles = files.filter((f) => f.toLowerCase().endsWith('.zip') || f.toLowerCase().includes('.zip.'));
+        if (zipFiles.length > 0) {
+          const suitePrefix = path.basename(reqPath).toLowerCase().replace(/android-/, '');
+          const versionPart = (reqPath.split('/')[1] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const bestZip =
+            zipFiles.find((f) => {
+              const lower = f.toLowerCase().replace(/[^a-z0-9]/g, '');
+              return lower.includes(suitePrefix) && (versionPart ? lower.includes(versionPart) : true);
+            }) ||
+            zipFiles.find((f) => f.toLowerCase().includes(suitePrefix)) ||
+            zipFiles[0];
+
+          const zipFullPath = path.join(cDir, bestZip);
+          res.setHeader('Content-Disposition', `attachment; filename="${bestZip}"`);
+          res.setHeader('X-Filename', bestZip);
+          res.setHeader('Content-Type', 'application/zip');
+          console.log(`[Hub Sync] Serving matching zip: ${zipFullPath}`);
+          return res.sendFile(zipFullPath);
+        }
+      } catch (_) {}
+    }
+
+    // 3. If directory exists without zip, stream tar.gz
+    if (fs.existsSync(fullTarget) && fs.statSync(fullTarget).isDirectory()) {
+      const baseName = path.basename(fullTarget);
+      const tarName = `${baseName}.tar.gz`;
+      res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
+      res.setHeader('X-Filename', tarName);
+      res.setHeader('X-Archive-Type', 'tar.gz');
+      res.setHeader('Content-Type', 'application/gzip');
+
+      console.log(`[Hub Sync] Streaming tar.gz from: ${fullTarget}`);
+      const tarProc = spawn('tar', ['-czf', '-', '-C', path.dirname(fullTarget), baseName]);
+      tarProc.stdout.pipe(res);
+      tarProc.stderr.on('data', (err) => console.error('[Sync tar error]', err.toString()));
+      return;
+    }
   }
 
-  // 3. If directory exists without zip, stream tar.gz
-  if (fs.existsSync(fullTarget) && fs.statSync(fullTarget).isDirectory()) {
-    const baseName = path.basename(fullTarget);
-    const tarName = `${baseName}.tar.gz`;
-    res.setHeader('Content-Disposition', `attachment; filename="${tarName}"`);
-    res.setHeader('X-Filename', tarName);
-    res.setHeader('X-Archive-Type', 'tar.gz');
-    res.setHeader('Content-Type', 'application/gzip');
-
-    const tarProc = spawn('tar', ['-czf', '-', '-C', path.dirname(fullTarget), baseName]);
-    tarProc.stdout.pipe(res);
-    tarProc.stderr.on('data', (err) => console.error('[Sync tar error]', err.toString()));
-    return;
-  }
-
+  console.warn(`[Hub Sync] 404 Not Found for "${reqPath}" across all candidate roots.`);
   return res.status(404).send(`Tool resource not found: ${reqPath}`);
 });
 
@@ -1678,13 +1710,22 @@ wssUi.on('connection', (ws) => {
 
             const { id, targetNode, filename } = msg.transfer;
             const targetRelDir = filename.replace(/\/android-(cts|gts|sts)$/, '');
-            sendToBridge(targetNode, {
+            const sent = sendToBridge(targetNode, {
               type: 'CMD_SYNC_TOOL',
               id,
               resource: filename,
               target_rel_dir: targetRelDir,
             });
-            console.log(`[Hub] Dispatched CMD_SYNC_TOOL to ${targetNode} for ${filename}`);
+            if (sent) {
+              console.log(`[Hub] Dispatched CMD_SYNC_TOOL to ${targetNode} for ${filename}`);
+            } else {
+              console.warn(`[Hub] Failed to dispatch CMD_SYNC_TOOL: ${targetNode} offline`);
+              serverActiveTransfers = serverActiveTransfers.map((t) =>
+                t.id === id ? { ...t, status: 'failed', progress: 0, speedMBps: 0 } : t
+              );
+              saveUiStateToDisk();
+              broadcastFleetState();
+            }
           }
           break;
         }

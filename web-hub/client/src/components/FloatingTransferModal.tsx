@@ -131,7 +131,7 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
             const currentStepIdx = getStepIndex(item);
 
             return (
-              <div key={item.id} className={`transfer-card ${isCompleted ? 'transfer-card-completed' : ''}`}>
+              <div key={item.id} className={`transfer-card ${isCompleted ? 'transfer-card-completed' : isFailed ? 'transfer-card-failed' : ''}`}>
                 {/* Node Source -> Target & Action Buttons */}
                 <div className="transfer-card-top">
                   <div className="transfer-nodes-flow">
@@ -143,10 +143,10 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
                   </div>
 
                   <div className="transfer-card-controls">
-                    <span className={`transfer-pct-label ${isCompleted ? 'text-pass' : ''}`}>
-                      {isCompleted ? '100%' : `${Math.round(item.progress)}%`}
+                    <span className={`transfer-pct-label ${isCompleted ? 'text-pass' : isFailed ? 'text-fail' : ''}`}>
+                      {isCompleted ? '100%' : isFailed ? 'Gagal' : `${Math.round(item.progress)}%`}
                     </span>
-                    {!isCompleted && onPauseResume && (
+                    {!isCompleted && !isFailed && onPauseResume && (
                       <button
                         type="button"
                         className="transfer-ctrl-btn"
@@ -161,7 +161,7 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
                         type="button"
                         className="transfer-ctrl-btn"
                         onClick={() => onCancel(item.id)}
-                        title={isCompleted ? 'Remove from list' : 'Cancel Transfer'}
+                        title={isCompleted || isFailed ? 'Hapus dari daftar' : 'Cancel Transfer'}
                       >
                         <SquareIcon size={11} />
                       </button>
@@ -190,11 +190,13 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
                               ? 'step-done'
                               : isStepActive
                               ? 'step-active'
+                              : isFailed && idx === currentStepIdx
+                              ? 'step-failed'
                               : 'step-pending'
                           }`}
                         >
                           <span className="step-bullet">
-                            {isStepDone ? '✓' : idx + 1}
+                            {isStepDone ? '✓' : isFailed && idx === currentStepIdx ? '✕' : idx + 1}
                           </span>
                           <span className="step-label">{step.label}</span>
                         </div>
@@ -213,16 +215,18 @@ export const FloatingTransferModal: React.FC<FloatingTransferModalProps> = ({
                 {/* Progress Bar */}
                 <div className="transfer-progress-track">
                   <div
-                    className={`transfer-progress-bar ${isCompleted ? 'bar-completed' : isPaused ? 'bar-paused' : ''}`}
-                    style={{ width: `${Math.min(100, Math.max(0, item.progress))}%` }}
+                    className={`transfer-progress-bar ${isCompleted ? 'bar-completed' : isFailed ? 'bar-failed' : isPaused ? 'bar-paused' : ''}`}
+                    style={{ width: `${isFailed ? 100 : Math.min(100, Math.max(0, item.progress))}%` }}
                   />
                 </div>
 
                 {/* Speed and Size Metrics */}
                 <div className="transfer-metrics-row">
-                  <span className="transfer-speed">
+                  <span className="transfer-speed" style={{ color: isFailed ? 'var(--status-fail, #ef4444)' : undefined }}>
                     {isCompleted
                       ? '✓ Terpasang & Siap'
+                      : isFailed
+                      ? '❌ Gagal transfer (File sumber tidak ditemukan / error jaringan)'
                       : isPaused
                       ? 'Paused'
                       : item.status === 'extracting'
