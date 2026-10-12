@@ -56,14 +56,26 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   const [selectedModelFilter, setSelectedModelFilter] = useState<string>('ALL');
 
   useEffect(() => {
-    if (laundryAnalysis && laundryAnalysis.rows) {
+    if (!isOpen) {
+      setSelectedZipPath('');
+      setSelectedRowIds([]);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (laundryAnalysis && laundryAnalysis.rows && laundryAnalysis.zip_path === selectedZipPath) {
       // By default select all failed/not-executed modules
       const failed = laundryAnalysis.rows
         .filter((r) => r.failed > 0 || r.status !== 'pass')
         .map((r) => r.id);
       setSelectedRowIds(failed.length > 0 ? failed : laundryAnalysis.rows.map((r) => r.id));
     }
-  }, [laundryAnalysis]);
+  }, [laundryAnalysis, selectedZipPath]);
+
+  const isParsing = Boolean(
+    selectedZipPath && (!laundryAnalysis || laundryAnalysis.zip_path !== selectedZipPath)
+  );
+  const selectedZipFilename = selectedZipPath ? (selectedZipPath.split('/').pop() || selectedZipPath) : '';
 
   // Check if a model currently has connected devices
   const isModelDeviceConnected = (modelName: string): boolean => {
@@ -311,15 +323,144 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
           {selectedZipPath && (
             <div className="form-group">
               <label className="form-label">Module Analysis & Test Run Details</label>
-              {!laundryAnalysis ? (
-                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
-                  Analyzing test_result.xml on node...
-                </div>
-              ) : laundryAnalysis.error ? (
+              {isParsing ? (
+                <>
+                  {/* Parsing Shimmer Banner */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.625rem',
+                      padding: '0.625rem 0.875rem',
+                      backgroundColor: 'rgba(56, 139, 253, 0.08)',
+                      border: '1px solid rgba(56, 139, 253, 0.25)',
+                      borderRadius: 'var(--radius-md)',
+                      marginBottom: '0.75rem',
+                    }}
+                  >
+                    <div
+                      className="spin-anim"
+                      style={{
+                        width: '14px',
+                        height: '14px',
+                        border: '2px solid rgba(56, 139, 253, 0.3)',
+                        borderTopColor: 'var(--accent-primary, #58a6ff)',
+                        borderRadius: '50%',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontSize: '0.8125rem',
+                        color: 'var(--text-primary)',
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <span style={{ color: 'var(--accent-primary, #58a6ff)', fontWeight: 600 }}>
+                        Mengekstrak & mem-parsing paket zip:{' '}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', opacity: 0.9 }}>
+                        {selectedZipFilename}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Skeleton Header Cards */}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                      gap: '0.625rem',
+                      padding: '0.75rem 0.875rem',
+                      backgroundColor: 'var(--bg-subtle)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-subtle)',
+                      marginBottom: '0.75rem',
+                    }}
+                  >
+                    {[
+                      { label: 'TEST RUN (PLAN)', width: '60px' },
+                      { label: 'AP VERSION', width: '110px' },
+                      { label: 'TARGET MODEL', width: '70px' },
+                      { label: 'EXECUTION RESULT', width: '90px' },
+                    ].map((item, idx) => (
+                      <div key={idx}>
+                        <div
+                          style={{
+                            fontSize: '0.6875rem',
+                            color: 'var(--text-secondary)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                          }}
+                        >
+                          {item.label}
+                        </div>
+                        <div style={{ marginTop: '0.35rem' }}>
+                          <div className="skeleton-shimmer" style={{ width: item.width, height: '16px' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Skeleton Table Rows */}
+                  <div className="table-responsive" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '56px', textAlign: 'center' }}>SELECT</th>
+                          <th style={{ minWidth: '240px' }}>TESTCASE</th>
+                          <th style={{ minWidth: '320px' }}>SUBTESTCASES</th>
+                          <th style={{ width: '100px', textAlign: 'center' }}>STATUS</th>
+                          <th style={{ width: '90px', textAlign: 'center' }}>TIME</th>
+                          <th style={{ minWidth: '160px' }}>RESULTS</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[1, 2, 3, 4, 5].map((idx) => (
+                          <tr key={idx} style={{ opacity: 0.65 }}>
+                            <td style={{ textAlign: 'center' }}>
+                              <div
+                                className="skeleton-shimmer"
+                                style={{ width: '28px', height: '16px', margin: '0 auto', borderRadius: '10px' }}
+                              />
+                            </td>
+                            <td>
+                              <div
+                                className="skeleton-shimmer"
+                                style={{ width: `${55 + (idx % 3) * 15}%`, height: '14px', marginBottom: '0.25rem' }}
+                              />
+                              <div className="skeleton-shimmer" style={{ width: '40%', height: '10px', opacity: 0.5 }} />
+                            </td>
+                            <td>
+                              <div className="skeleton-shimmer" style={{ width: `${65 + (idx % 2) * 20}%`, height: '12px' }} />
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div
+                                className="skeleton-shimmer"
+                                style={{ width: '65px', height: '20px', margin: '0 auto', borderRadius: '4px' }}
+                              />
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div className="skeleton-shimmer" style={{ width: '45px', height: '14px', margin: '0 auto' }} />
+                            </td>
+                            <td>
+                              <div className="skeleton-shimmer" style={{ width: '70%', height: '12px' }} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : laundryAnalysis?.error ? (
                 <div className="badge badge-fail" style={{ padding: '0.5rem', width: '100%' }}>
                   {laundryAnalysis.error}
                 </div>
-              ) : laundryAnalysis.rows.length === 0 ? (
+              ) : !laundryAnalysis || laundryAnalysis.rows.length === 0 ? (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
                   No modules found in this result.
                 </div>
@@ -503,9 +644,9 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
           <button
             className="btn btn-primary"
             onClick={handleConfirm}
-            disabled={!selectedZipPath || selectedRowIds.length === 0}
+            disabled={!selectedZipPath || selectedRowIds.length === 0 || isParsing}
           >
-            Confirm Selection ({selectedRowIds.length})
+            {isParsing ? 'Mem-parsing...' : `Confirm Selection (${selectedRowIds.length})`}
           </button>
         </div>
       </div>
