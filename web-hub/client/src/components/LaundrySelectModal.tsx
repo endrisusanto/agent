@@ -65,18 +65,6 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
     }
   }, [laundryAnalysis]);
 
-  // Extract unique models with counts from all available laundry zips
-  const modelChips = useMemo(() => {
-    const counts: Record<string, number> = {};
-    (zips || []).forEach((z) => {
-      const cleanModel = normalizeModelName(z.model || z.filename);
-      if (cleanModel !== 'UNKNOWN') {
-        counts[cleanModel] = (counts[cleanModel] || 0) + 1;
-      }
-    });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, [zips]);
-
   // Check if a model currently has connected devices
   const isModelDeviceConnected = (modelName: string): boolean => {
     if (!devices || devices.length === 0) return false;
@@ -87,6 +75,34 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
       return dModel === mClean || dModel.includes(mClean) || mClean.includes(dModel);
     });
   };
+
+  // Extract unique models with counts from all available laundry zips.
+  // Group active (connected device) chips on the left, inactive on the right, both sorted ASC.
+  const { activeChips, inactiveChips } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (zips || []).forEach((z) => {
+      const cleanModel = normalizeModelName(z.model || z.filename);
+      if (cleanModel !== 'UNKNOWN') {
+        counts[cleanModel] = (counts[cleanModel] || 0) + 1;
+      }
+    });
+
+    const active: [string, number][] = [];
+    const inactive: [string, number][] = [];
+
+    Object.entries(counts).forEach((entry) => {
+      if (isModelDeviceConnected(entry[0])) {
+        active.push(entry);
+      } else {
+        inactive.push(entry);
+      }
+    });
+
+    active.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+    inactive.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+
+    return { activeChips: active, inactiveChips: inactive };
+  }, [zips, devices]);
 
   // Filtered zips based on selected model chip
   const filteredZips = useMemo(() => {
@@ -160,8 +176,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                 <span className="pill-count">{zips.length}</span>
               </button>
 
-              {modelChips.map(([modelName, count]) => {
-                const connected = isModelDeviceConnected(modelName);
+              {activeChips.map(([modelName, count]) => {
                 const isSelected = selectedModelFilter === modelName;
                 return (
                   <button
@@ -171,23 +186,54 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                     onClick={() => setSelectedModelFilter(modelName)}
                     style={{
                       flexShrink: 0,
-                      border: connected ? '1px solid var(--accent-primary)' : undefined,
-                      boxShadow: connected ? '0 0 8px rgba(86, 211, 100, 0.25)' : undefined,
+                      border: '1px solid var(--accent-primary)',
+                      boxShadow: '0 0 8px rgba(86, 211, 100, 0.25)',
                     }}
-                    title={connected ? `${modelName} (Perangkat Tersambung)` : modelName}
+                    title={`${modelName} (Perangkat Tersambung)`}
                   >
-                    {connected && (
-                      <span
-                        style={{
-                          width: '6px',
-                          height: '6px',
-                          borderRadius: '50%',
-                          backgroundColor: '#56d364',
-                          display: 'inline-block',
-                          boxShadow: '0 0 6px #56d364',
-                        }}
-                      />
-                    )}
+                    <span
+                      style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        backgroundColor: '#56d364',
+                        display: 'inline-block',
+                        boxShadow: '0 0 6px #56d364',
+                      }}
+                    />
+                    <span>{modelName}</span>
+                    <span className="pill-count">{count}</span>
+                  </button>
+                );
+              })}
+
+              {activeChips.length > 0 && inactiveChips.length > 0 && (
+                <span
+                  style={{
+                    color: 'var(--border-subtle, rgba(255, 255, 255, 0.25))',
+                    padding: '0 0.35rem',
+                    alignSelf: 'center',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    userSelect: 'none',
+                    flexShrink: 0,
+                  }}
+                >
+                  |
+                </span>
+              )}
+
+              {inactiveChips.map(([modelName, count]) => {
+                const isSelected = selectedModelFilter === modelName;
+                return (
+                  <button
+                    key={modelName}
+                    type="button"
+                    className={`model-pill ${isSelected ? 'active' : ''}`}
+                    onClick={() => setSelectedModelFilter(modelName)}
+                    style={{ flexShrink: 0 }}
+                    title={modelName}
+                  >
                     <span>{modelName}</span>
                     <span className="pill-count">{count}</span>
                   </button>

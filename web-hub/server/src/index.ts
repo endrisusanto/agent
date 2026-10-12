@@ -251,6 +251,8 @@ const preflightReports = new Map<string, any>();
 
 export function getAutoRoot(): string {
   const candidates = [
+    '/auto_hdd1',
+    '/auto_hdd',
     process.env.AUTO_ROOT,
     '/auto',
     '/run/media/endri-pro/BINARY_HDD1/AUTO',
@@ -605,8 +607,10 @@ app.get('/api/sync/file', (req, res) => {
   const candidateRoots = [
     primaryRoot,
     '/auto',
-    '/run/media/endri-pro/BINARY_HDD/AUTO',
+    '/auto_hdd1',
+    '/auto_hdd',
     '/run/media/endri-pro/BINARY_HDD1/AUTO',
+    '/run/media/endri-pro/BINARY_HDD/AUTO',
     '/home/gba/Desktop/GBA/AUTO',
   ].filter((r, idx, arr): r is string => Boolean(r && fs.existsSync(r) && arr.indexOf(r) === idx));
 
