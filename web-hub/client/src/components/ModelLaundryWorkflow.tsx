@@ -379,6 +379,15 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       workflow.selectedModules.includes(r.testcase || r.suite)
     );
 
+    if (selectedRowsData.length === 0) {
+      showAlert({
+        title: 'Modul Belum Dipilih',
+        message: 'Pilih minimal 1 modul pengujian pada daftar modul hasil pengujian.',
+        type: 'warning',
+      });
+      return;
+    }
+
     const userDevices = workflow.selectedSerials.filter((s) => {
       const dev = allDevices.find((d) => d.serial === s);
       return dev ? !dev.is_userdebug : false;
@@ -391,28 +400,90 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
     const detectedPlanName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
 
-    // 1. Laundry SMR Validation: Must have at least 1 USER and at least 1 USERDEBUG device
+    // 1. Determine active suites selected (STS vs CTS/GTS)
+    const hasSts = selectedRowsData.some((r) => {
+      const suite = (r.suite || '').toUpperCase();
+      const tc = (r.testcase || '').toUpperCase();
+      const sub = (r.subtestcases || '').toUpperCase();
+      return suite.includes('STS') || tc.includes('STS') || sub.includes('STS');
+    });
+
+    const hasCtsOrGts = selectedRowsData.some((r) => {
+      const suite = (r.suite || '').toUpperCase();
+      const tc = (r.testcase || '').toUpperCase();
+      const sub = (r.subtestcases || '').toUpperCase();
+      return (
+        suite.includes('CTS') || suite.includes('GTS') ||
+        tc.includes('CTS') || tc.includes('GTS') ||
+        sub.includes('CTS') || sub.includes('GTS')
+      );
+    });
+
+    let runUserDevices = userDevices;
+    let runUserdebugDevices = userdebugDevices;
+
+    // 2. Laundry SMR Validation: Flexible suite-aware device requirements
     if (detectedPlanName === 'SMR') {
-      if (userDevices.length === 0 || userdebugDevices.length === 0) {
-        showAlert({
-          title: 'Ketentuan Perangkat SMR',
-          message: 'Laundry SMR memerlukan minimal 1 perangkat build type USER untuk CTS/GTS dan minimal 1 perangkat USERDEBUG untuk STS.',
-          details: [
-            'CTS & GTS Retry: Memerlukan perangkat build type USER',
-            'STS Retry: Memerlukan perangkat build type USERDEBUG',
-          ],
-          type: 'warning',
-        });
-        return;
+      if (hasSts && !hasCtsOrGts) {
+        // Hanya STS yang dicentang: Hanya butuh USERDEBUG (bisa > 1 untuk sharding)
+        if (userdebugDevices.length === 0) {
+          showAlert({
+            title: 'Ketentuan Perangkat STS',
+            message: 'Pengujian STS memerlukan minimal 1 perangkat build type USERDEBUG (dapat memilih lebih dari 1 perangkat untuk sharding).',
+            type: 'warning',
+          });
+          return;
+        }
+        runUserDevices = [];
+        runUserdebugDevices = userdebugDevices;
+      } else if (!hasSts && hasCtsOrGts) {
+        // Hanya CTS dan/atau GTS yang dicentang: Hanya butuh USER (bisa > 1 untuk sharding)
+        if (userDevices.length === 0) {
+          showAlert({
+            title: 'Ketentuan Perangkat CTS/GTS',
+            message: 'Pengujian CTS & GTS memerlukan minimal 1 perangkat build type USER (dapat memilih lebih dari 1 perangkat untuk sharding).',
+            type: 'warning',
+          });
+          return;
+        }
+        runUserDevices = userDevices;
+        runUserdebugDevices = [];
+      } else {
+        // Keduanya dicentang: butuh USER (untuk CTS/GTS) dan USERDEBUG (untuk STS)
+        if (userDevices.length === 0 || userdebugDevices.length === 0) {
+          showAlert({
+            title: 'Ketentuan Perangkat SMR',
+            message: 'Laundry SMR (kombinasi CTS/GTS & STS) memerlukan minimal 1 perangkat build type USER untuk CTS/GTS dan minimal 1 perangkat USERDEBUG untuk STS.',
+            details: [
+              'CTS & GTS Retry: Memerlukan perangkat build type USER',
+              'STS Retry: Memerlukan perangkat build type USERDEBUG',
+            ],
+            type: 'warning',
+          });
+          return;
+        }
+        runUserDevices = userDevices;
+        runUserdebugDevices = userdebugDevices;
       }
+    } else {
+      // Untuk Normal atau SKU:
+      runUserDevices = userDevices.length > 0 ? userDevices : workflow.selectedSerials;
+      runUserdebugDevices = userdebugDevices;
     }
 
-    // 2. Fingerprint & Build Validation: Ensure devices (especially USER devices) match the zip fingerprint/PDA
+    // 3. Fingerprint & Build Validation: Ensure participating devices match the zip fingerprint/PDA
     const targetFp = analysisRows.find((r) => r.fingerprint)?.fingerprint || workflow.fingerprint || '';
     const targetAp = workflow.ap_version || workflow.pda || analysisRows.find((r) => r.ap_version)?.ap_version || '';
 
+    const devicesToCheck =
+      detectedPlanName === 'SMR' && hasSts && !hasCtsOrGts
+        ? runUserdebugDevices
+        : detectedPlanName === 'SMR' && !hasSts && hasCtsOrGts
+        ? runUserDevices
+        : workflow.selectedSerials;
+
     const mismatchedDevices: { serial: string; model: string; is_userdebug: boolean; pda: string }[] = [];
-    workflow.selectedSerials.forEach((s) => {
+    devicesToCheck.forEach((s) => {
       const dev = allDevices.find((d) => d.serial === s);
       if (dev && !isDeviceFingerprintMatch(dev, targetFp, targetAp, workflow.pda)) {
         mismatchedDevices.push({
@@ -453,14 +524,15 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
       laundry_zip_path: workflow.selectedZip,
       selected_laundry_results: workflow.selectedModules,
       selected_laundry_rows: selectedRowsData,
-      user_devices: userDevices,
-      userdebug_devices: userdebugDevices,
+      user_devices: runUserDevices,
+      userdebug_devices: runUserdebugDevices,
       retry_count: 5,
       timeout_secs: 86400,
     });
 
     onUpdateWorkflow({ ...workflow, isExpanded: false, lastRunId: generatedRunId });
   };
+
 
   const planName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
   const apVersion = workflow.ap_version || workflow.pda || (matchingDevices[0]?.pda ?? '');

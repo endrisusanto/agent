@@ -2188,15 +2188,59 @@ fn run_laundry_smr_flow(
     status_tx: &mpsc::UnboundedSender<(String, String, u64)>,
     collected_zips: &Arc<Mutex<Vec<String>>>,
 ) -> Result<i32, String> {
-    if payload.user_devices.is_empty() || payload.userdebug_devices.is_empty() {
-        let err = "[AI Worker][ERROR] Laundry SMR membutuhkan minimal 1 perangkat build type USER (untuk CTS/GTS) dan minimal 1 perangkat build type USERDEBUG (untuk STS).";
+    let needs_sts = if payload.selected_laundry_rows.is_empty() {
+        true
+    } else {
+        payload.selected_laundry_rows.iter().any(|r| {
+            let suite = r.get("suite").and_then(|v| v.as_str()).unwrap_or("");
+            let testcase = r.get("testcase").and_then(|v| v.as_str()).unwrap_or("");
+            let sub = r.get("subtestcases").and_then(|v| v.as_str()).unwrap_or("");
+            suite.eq_ignore_ascii_case("sts")
+                || testcase.to_uppercase().contains("STS")
+                || sub.to_uppercase().contains("STS")
+        })
+    };
+
+    let needs_cts_gts = if payload.selected_laundry_rows.is_empty() {
+        true
+    } else {
+        payload.selected_laundry_rows.iter().any(|r| {
+            let suite = r.get("suite").and_then(|v| v.as_str()).unwrap_or("");
+            let testcase = r.get("testcase").and_then(|v| v.as_str()).unwrap_or("");
+            let sub = r.get("subtestcases").and_then(|v| v.as_str()).unwrap_or("");
+            let s_up = suite.to_uppercase();
+            let tc_up = testcase.to_uppercase();
+            let sub_up = sub.to_uppercase();
+            s_up.contains("CTS")
+                || s_up.contains("GTS")
+                || tc_up.contains("CTS")
+                || tc_up.contains("GTS")
+                || sub_up.contains("CTS")
+                || sub_up.contains("GTS")
+        })
+    };
+
+    if needs_cts_gts && payload.user_devices.is_empty() {
+        let err = "[AI Worker][ERROR] Laundry SMR: Pengujian CTS & GTS membutuhkan minimal 1 perangkat build type USER.";
         let _ = log_tx.send(err.to_string());
         return Err(err.to_string());
     }
-    let mut cts_gts_devices = payload.user_devices.clone();
 
-    let source = prepare_laundry_source(auto_root, &cts_gts_devices, payload, session_dir, pda, log_tx, collected_zips)?;
-    let has_cts_or_gts = !source.cts_results.is_empty() || !source.gts_results.is_empty();
+    if needs_sts && payload.userdebug_devices.is_empty() {
+        let err = "[AI Worker][ERROR] Laundry SMR: Pengujian STS membutuhkan minimal 1 perangkat build type USERDEBUG.";
+        let _ = log_tx.send(err.to_string());
+        return Err(err.to_string());
+    }
+
+    let mut cts_gts_devices = payload.user_devices.clone();
+    let source_devices = if !cts_gts_devices.is_empty() {
+        &cts_gts_devices
+    } else {
+        &payload.userdebug_devices
+    };
+
+    let source = prepare_laundry_source(auto_root, source_devices, payload, session_dir, pda, log_tx, collected_zips)?;
+    let has_cts_or_gts = (!source.cts_results.is_empty() || !source.gts_results.is_empty()) && needs_cts_gts;
 
     if source.sts_results.is_empty() {
         for d in &payload.userdebug_devices {
@@ -2207,6 +2251,7 @@ fn run_laundry_smr_flow(
     } else if cts_gts_devices.is_empty() {
         cts_gts_devices = payload.userdebug_devices.clone();
     }
+
 
     let mut exit_codes = Vec::new();
 
