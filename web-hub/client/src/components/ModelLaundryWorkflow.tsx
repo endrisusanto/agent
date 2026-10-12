@@ -73,16 +73,67 @@ export const formatDuration = formatDurationHms;
 
 export function detectZipPlanKind(rows?: LaundryRow[], zipPath?: string, existingPlan?: string): 'SKU' | 'SMR' | 'Normal' {
   const rowList = Array.isArray(rows) ? rows : [];
+
+  // 1. Check if any row's subtestcases, testcase, or command explicitly has gts-variant or sku
+  const hasSkuOrVariant = rowList.some((r) => {
+    const sub = (r.subtestcases || '').toLowerCase();
+    const tc = (r.testcase || '').toLowerCase();
+    const p = (r.plan || '').toLowerCase();
+    return (
+      sub.includes('gts-variant') ||
+      sub.includes('variant') ||
+      sub.includes('sku') ||
+      tc.includes('gts-variant') ||
+      tc.includes('variant') ||
+      tc.includes('sku') ||
+      p === 'sku' ||
+      p.includes('variant')
+    );
+  });
+  if (hasSkuOrVariant) {
+    return 'SKU';
+  }
+
+  // 2. Check if any row has SMR or STS indicators
+  const hasSmr = rowList.some((r) => {
+    const sub = (r.subtestcases || '').toLowerCase();
+    const tc = (r.testcase || '').toLowerCase();
+    const p = (r.plan || '').toLowerCase();
+    return (
+      sub.includes('smr') ||
+      sub.includes('sts') ||
+      tc.includes('smr') ||
+      tc.includes('sts') ||
+      p === 'smr' ||
+      p === 'sts'
+    );
+  });
+  if (hasSmr) {
+    return 'SMR';
+  }
+
   const directRowPlan = rowList.find((r) => r.plan && ['SKU', 'SMR', 'Normal'].includes(r.plan))?.plan;
   if (directRowPlan && ['SKU', 'SMR', 'Normal'].includes(directRowPlan)) {
     return directRowPlan as 'SKU' | 'SMR' | 'Normal';
   }
 
   const zipLower = (zipPath || '').toLowerCase();
-  if (zipLower.includes('ctssku') || zipLower.includes('cts_sku') || zipLower.includes('sku')) {
+  if (
+    zipLower.includes('ctssku') ||
+    zipLower.includes('cts_sku') ||
+    zipLower.includes('sku') ||
+    zipLower.includes('variant')
+  ) {
     return 'SKU';
   }
-  if (zipLower.includes('ctssmr') || zipLower.includes('cts_smr') || zipLower.includes('gtsmr') || zipLower.includes('gtssmr') || zipLower.includes('smr') || zipLower.includes('sts')) {
+  if (
+    zipLower.includes('ctssmr') ||
+    zipLower.includes('cts_smr') ||
+    zipLower.includes('gtsmr') ||
+    zipLower.includes('gtssmr') ||
+    zipLower.includes('smr') ||
+    zipLower.includes('sts')
+  ) {
     return 'SMR';
   }
 
@@ -92,6 +143,7 @@ export function detectZipPlanKind(rows?: LaundryRow[], zipPath?: string, existin
 
   return 'Normal';
 }
+
 
 interface ModelLaundryWorkflowProps {
   workflow: LaundryWorkflowState;

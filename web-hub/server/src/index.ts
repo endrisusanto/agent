@@ -712,7 +712,7 @@ function parseRunBatchMetadata(batchName: string) {
   if (batchName.includes('_SMR_') || batchName.includes('SMR')) {
     plan = 'SMR';
     suite = 'SMR';
-  } else if (batchName.includes('_SKU_') || batchName.includes('SKU')) {
+  } else if (batchName.includes('_SKU_') || batchName.includes('SKU') || batchName.toLowerCase().includes('variant')) {
     plan = 'SKU';
     suite = 'SKU';
   } else if (batchName.includes('STS')) {

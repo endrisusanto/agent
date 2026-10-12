@@ -189,7 +189,7 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                     .or_else(|| parse_xml_string_attr(&content, "plan"))
                     .unwrap_or_default();
 
-                let detected_plan = detect_laundry_plan_kind(&content, xml_path, original_zip_path);
+                let mut detected_plan = detect_laundry_plan_kind(&content, xml_path, original_zip_path);
 
                 let start_ms = parse_xml_attr(&content, "start");
                 let end_ms = parse_xml_attr(&content, "end");
@@ -239,6 +239,14 @@ fn scan_laundry_result_infos(root: &Path, original_zip_path: &Path) -> Result<Ve
                         format!("{} retry", suite.to_lowercase())
                     }
                 };
+
+                if subtestcases_str.to_lowercase().contains("variant")
+                    || subtestcases_str.to_lowercase().contains("gts-variant")
+                    || subtestcases_str.to_lowercase().contains("sku")
+                {
+                    detected_plan = "SKU".to_string();
+                }
+
 
                 let devices_str = parse_xml_string_attr(&content, "devices")
                     .or_else(|| parse_xml_string_attr(&content, "device_serial"))
@@ -311,7 +319,7 @@ fn format_xml_duration(start_ms: Option<u64>, end_ms: Option<u64>) -> String {
 fn detect_laundry_plan_kind(content: &str, _xml_path: &Path, original_zip_path: &Path) -> String {
     // 1. Check filename / zip path first
     let zip_str = original_zip_path.to_string_lossy().to_lowercase();
-    if zip_str.contains("ctssku") || zip_str.contains("cts_sku") || zip_str.contains("sku") {
+    if zip_str.contains("ctssku") || zip_str.contains("cts_sku") || zip_str.contains("sku") || zip_str.contains("variant") {
         return "SKU".to_string();
     }
     if zip_str.contains("ctssmr") || zip_str.contains("cts_smr") || zip_str.contains("gtsmr") || zip_str.contains("gtssmr") || zip_str.contains("smr") || zip_str.contains("sts") {
@@ -323,15 +331,29 @@ fn detect_laundry_plan_kind(content: &str, _xml_path: &Path, original_zip_path: 
     let cmd_args = parse_xml_string_attr(content, "command_line_args").unwrap_or_default().to_lowercase();
     let combined_plan = format!("{suite_plan} {cmd_args}");
 
-    if combined_plan.contains("ctssku") || combined_plan.contains("cts-sku") || combined_plan.contains("subplan ctssku") || combined_plan.contains("subplan sku") {
+    if combined_plan.contains("ctssku")
+        || combined_plan.contains("cts-sku")
+        || combined_plan.contains("subplan ctssku")
+        || combined_plan.contains("subplan sku")
+        || combined_plan.contains("gts-variant")
+        || combined_plan.contains("variant")
+        || combined_plan.contains("sku")
+    {
         return "SKU".to_string();
     }
-    if combined_plan.contains("ctssmr") || combined_plan.contains("cts-smr") || combined_plan.contains("gtsmr") || combined_plan.contains("gtssmr") || combined_plan.contains("subplan smr") || combined_plan.contains("sts") {
+    if combined_plan.contains("ctssmr")
+        || combined_plan.contains("cts-smr")
+        || combined_plan.contains("gtsmr")
+        || combined_plan.contains("gtssmr")
+        || combined_plan.contains("subplan smr")
+        || combined_plan.contains("sts")
+    {
         return "SMR".to_string();
     }
 
     "Normal".to_string()
 }
+
 
 fn extract_model_from_name(filename: &str) -> Option<String> {
     let base = filename.strip_suffix(".zip").unwrap_or(filename);
