@@ -2194,10 +2194,7 @@ fn run_laundry_smr_flow(
         payload.selected_laundry_rows.iter().any(|r| {
             let suite = r.get("suite").and_then(|v| v.as_str()).unwrap_or("");
             let testcase = r.get("testcase").and_then(|v| v.as_str()).unwrap_or("");
-            let sub = r.get("subtestcases").and_then(|v| v.as_str()).unwrap_or("");
-            suite.eq_ignore_ascii_case("sts")
-                || testcase.to_uppercase().contains("STS")
-                || sub.to_uppercase().contains("STS")
+            suite.eq_ignore_ascii_case("sts") || testcase.to_uppercase().starts_with("STS")
         })
     };
 
@@ -2207,16 +2204,9 @@ fn run_laundry_smr_flow(
         payload.selected_laundry_rows.iter().any(|r| {
             let suite = r.get("suite").and_then(|v| v.as_str()).unwrap_or("");
             let testcase = r.get("testcase").and_then(|v| v.as_str()).unwrap_or("");
-            let sub = r.get("subtestcases").and_then(|v| v.as_str()).unwrap_or("");
             let s_up = suite.to_uppercase();
             let tc_up = testcase.to_uppercase();
-            let sub_up = sub.to_uppercase();
-            s_up.contains("CTS")
-                || s_up.contains("GTS")
-                || tc_up.contains("CTS")
-                || tc_up.contains("GTS")
-                || sub_up.contains("CTS")
-                || sub_up.contains("GTS")
+            s_up == "CTS" || s_up == "GTS" || tc_up.starts_with("CTS") || tc_up.starts_with("GTS")
         })
     };
 

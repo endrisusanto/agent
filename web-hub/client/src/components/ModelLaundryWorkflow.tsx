@@ -400,22 +400,21 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
     const detectedPlanName = detectZipPlanKind(analysisRows, workflow.selectedZip, workflow.plan);
 
-    // 1. Determine active suites selected (STS vs CTS/GTS)
+    // 1. Determine active suites selected (STS vs CTS/GTS) strictly by suite / testcase prefix
     const hasSts = selectedRowsData.some((r) => {
-      const suite = (r.suite || '').toUpperCase();
-      const tc = (r.testcase || '').toUpperCase();
-      const sub = (r.subtestcases || '').toUpperCase();
-      return suite.includes('STS') || tc.includes('STS') || sub.includes('STS');
+      const suite = (r.suite || '').trim().toUpperCase();
+      const tc = (r.testcase || '').trim().toUpperCase();
+      return suite === 'STS' || tc.startsWith('STS');
     });
 
     const hasCtsOrGts = selectedRowsData.some((r) => {
-      const suite = (r.suite || '').toUpperCase();
-      const tc = (r.testcase || '').toUpperCase();
-      const sub = (r.subtestcases || '').toUpperCase();
+      const suite = (r.suite || '').trim().toUpperCase();
+      const tc = (r.testcase || '').trim().toUpperCase();
       return (
-        suite.includes('CTS') || suite.includes('GTS') ||
-        tc.includes('CTS') || tc.includes('GTS') ||
-        sub.includes('CTS') || sub.includes('GTS')
+        suite === 'CTS' ||
+        suite === 'GTS' ||
+        tc.startsWith('CTS') ||
+        tc.startsWith('GTS')
       );
     });
 
