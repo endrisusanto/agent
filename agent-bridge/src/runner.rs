@@ -872,7 +872,7 @@ fn sanitize_name(name: &str) -> String {
 }
 
 fn serial_args(devices: &[String]) -> String {
-    devices.iter().map(|s| format!(" -s {s}")).collect::<Vec<_>>().join("")
+    devices.iter().map(|s| format!(" --serial {s}")).collect::<Vec<_>>().join("")
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1253,6 +1253,17 @@ fn suite_workspace(root: &Path, suite_root: &Path, run_id: &str) -> Result<PathB
     let workspace = root.join(".gba-workspaces").join(sanitize_name(run_id)).join(format!("suite_{:x}", hasher.finish()));
     let install = workspace.join(suite_root.file_name().unwrap_or_default());
     if install.exists() {
+        for tool_name in ["cts-tradefed", "gts-tradefed", "sts-tradefed"] {
+            let tool_target = install.join("tools").join(tool_name);
+            if tool_target.is_file() {
+                if let Ok(content) = fs::read_to_string(&tool_target) {
+                    if content.contains("/testcases -name") {
+                        let patched = content.replace("/testcases -name", "/testcases/ -name");
+                        let _ = fs::write(&tool_target, patched);
+                    }
+                }
+            }
+        }
         return Ok(install);
     }
     fs::create_dir_all(&install).map_err(|err| format!("Cannot create workspace {}: {err}", install.display()))?;
@@ -1272,6 +1283,11 @@ fn suite_workspace(root: &Path, suite_root: &Path, run_id: &str) -> Result<PathB
                 let tool_target = target.join(tool.file_name());
                 if matches!(tool.file_name().to_str(), Some("cts-tradefed" | "gts-tradefed" | "sts-tradefed" | "test-utils-script")) {
                     let _ = fs::copy(tool.path(), &tool_target);
+                    // ponytail: When testcases is a symlink, 'find /path/testcases -name' fails to recurse unless trailing slash is present
+                    if let Ok(content) = fs::read_to_string(&tool_target) {
+                        let patched = content.replace("/testcases -name", "/testcases/ -name");
+                        let _ = fs::write(&tool_target, patched);
+                    }
                 } else {
                     let _ = symlink(tool.path(), &tool_target);
                 }
@@ -2631,10 +2647,11 @@ fn run_sts_flow(
         return Err(format!("sts-tradefed not found: {}", sts_exe.display()));
     }
 
-    let (sts_plan, shard_arg) = if devices.len() > 1 {
-        ("sts", format!(" --shard-count {}", devices.len()))
+    let sts_plan = "sts-dynamic-incremental";
+    let shard_arg = if devices.len() > 1 {
+        format!(" --shard-count {}", devices.len())
     } else {
-        ("sts-dynamic-incremental", String::new())
+        String::new()
     };
 
     let sts_cmd = format!(
