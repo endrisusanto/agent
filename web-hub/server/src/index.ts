@@ -251,11 +251,12 @@ const preflightReports = new Map<string, any>();
 
 export function getAutoRoot(): string {
   const candidates = [
+    '/auto_hdd2',
     '/auto_hdd1',
     '/auto_hdd',
     process.env.AUTO_ROOT,
     '/auto',
-    '/run/media/endri-pro/BINARY_HDD1/AUTO',
+    '/media/BINARY_HDD/AUTO',
     '/run/media/endri-pro/BINARY_HDD/AUTO',
     '/home/gba/Desktop/GBA/AUTO',
   ].filter((r): r is string => Boolean(r));

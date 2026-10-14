@@ -334,6 +334,48 @@ fn dirs_next_or_home() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
+fn resolve_valid_auto_root(preferred: &str) -> String {
+    let check_valid = |dir_str: &str| -> bool {
+        let p = std::path::Path::new(dir_str);
+        if !p.exists() || !p.is_dir() {
+            return false;
+        }
+        // Valid if it contains tool suites or is writable
+        p.join("CTS").is_dir() || p.join("GTS").is_dir() || p.join("STS").is_dir()
+    };
+
+    if !preferred.is_empty() && check_valid(preferred) {
+        return preferred.to_string();
+    }
+
+    let candidates = [
+        preferred,
+        "/media/BINARY_HDD/AUTO",
+        "/run/media/endri-pro/BINARY_HDD/AUTO",
+        "/home/gba/Desktop/GBA/AUTO",
+        "/home/endri-pro/Desktop/GBA/AUTO",
+    ];
+
+    for c in candidates {
+        if !c.is_empty() && check_valid(c) {
+            return c.to_string();
+        }
+    }
+
+    for c in candidates {
+        let p = std::path::Path::new(c);
+        if !c.is_empty() && p.exists() && p.is_dir() {
+            return c.to_string();
+        }
+    }
+
+    if !preferred.is_empty() {
+        preferred.to_string()
+    } else {
+        "/run/media/endri-pro/BINARY_HDD/AUTO".to_string()
+    }
+}
+
 fn load_initial_config() -> BridgeConfig {
     let host = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
@@ -342,18 +384,7 @@ fn load_initial_config() -> BridgeConfig {
     let default_pc_id = env::var("PC_ID").unwrap_or(host);
     let default_hub_url = env::var("HUB_URL").unwrap_or_else(|_| "wss://agent.endrisusanto.my.id/ws/bridge".to_string());
     let default_auto_root = env::var("AUTO_ROOT").unwrap_or_else(|_| {
-        let candidates = [
-            "/run/media/endri-pro/BINARY_HDD1/AUTO",
-            "/run/media/endri-pro/BINARY_HDD/AUTO",
-            "/home/endri-pro/Desktop/GBA/AUTO",
-        ];
-        for c in candidates {
-            let p = std::path::Path::new(c);
-            if p.exists() && p.is_dir() {
-                return c.to_string();
-            }
-        }
-        "/run/media/endri-pro/BINARY_HDD/AUTO".to_string()
+        resolve_valid_auto_root("/run/media/endri-pro/BINARY_HDD/AUTO")
     });
     let default_cucian_dir = env::var("CUCIAN_DIR").unwrap_or_else(|_| {
         dirs_next_or_home().join("Downloads").join("CUCIAN").to_string_lossy().to_string()
@@ -366,6 +397,7 @@ fn load_initial_config() -> BridgeConfig {
                 if cfg.cucian_dir.is_empty() {
                     cfg.cucian_dir = default_cucian_dir.clone();
                 }
+                cfg.auto_root = resolve_valid_auto_root(&cfg.auto_root);
                 let _ = fs::create_dir_all(&cfg.cucian_dir);
                 return cfg;
             }

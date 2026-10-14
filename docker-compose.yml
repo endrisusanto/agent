@@ -9,9 +9,8 @@ services:
       - "${PORT:-4010}:4000"
     volumes:
       - /home/endri-pro/Downloads/CUCIAN:/cucian:ro
-      - /run/media/endri-pro/BINARY_HDD/AUTO/Results:/run/media/endri-pro/BINARY_HDD/AUTO/Results:ro
-      - /run/media/endri-pro/BINARY_HDD/AUTO:/auto:ro
-      - /run/media/endri-pro/BINARY_HDD1/AUTO:/auto_hdd1:ro
+      - /media/BINARY_HDD/AUTO/Results:/run/media/endri-pro/BINARY_HDD/AUTO/Results:ro
+      - /media/BINARY_HDD/AUTO:/auto:ro
     environment:
       - PORT=4000
       - AUTO_ROOT=/auto

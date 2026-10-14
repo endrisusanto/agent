@@ -248,16 +248,17 @@ pub fn generate_ro_xml(serial: &str, session_dir: &Path, log_tx: &mpsc::Unbounde
     } else {
         format!("ro_{}.xml", sanitize_name(serial))
     };
+    let _ = fs::create_dir_all(session_dir);
     let xml_file = session_dir.join(&xml_filename);
 
-    if let Ok(_) = fs::write(&xml_file, &xml_content) {
+    if let Err(e) = fs::write(&xml_file, &xml_content) {
+        let _ = log_tx.send(format!("[AI Worker][WARN] Failed to write ro.xml for {serial}: {e}"));
+        None
+    } else {
         let _ = log_tx.send(format!("[AI Worker] ro.xml v4.5 generated: {}", xml_file.display()));
         let generic_ro = session_dir.join("ro.xml");
         let _ = fs::write(&generic_ro, &xml_content);
         Some(xml_file)
-    } else {
-        let _ = log_tx.send(format!("[AI Worker][WARN] Failed to write ro.xml for {serial}"));
-        None
     }
 }
 
