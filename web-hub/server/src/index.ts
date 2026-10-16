@@ -1663,6 +1663,15 @@ wssUi.on('connection', (ws) => {
           if (targetNode) {
             sendToBridge(targetNode, { type: 'CMD_ANALYZE_LAUNDRY', zip_path, targetPcId: pcId });
             console.log(`[Hub] Dispatched CMD_ANALYZE_LAUNDRY to ${targetNode} for ${zip_path} (for UI target: ${pcId})`);
+          } else {
+            console.warn(`[Hub] Gagal dispatch CMD_ANALYZE_LAUNDRY: Tidak ada PC Bridge yang online untuk ${zip_path}`);
+            broadcastToUi({
+              type: 'LAUNDRY_ANALYSIS_RESULT',
+              pcId: pcId || 'UNKNOWN',
+              zip_path,
+              rows: [],
+              error: 'Tidak ada PC Bridge yang online untuk mem-parsing zip ini. Pastikan gba-agent-bridge aktif di PC.'
+            });
           }
           break;
         }
@@ -1808,6 +1817,20 @@ setInterval(() => {
     broadcastFleetState();
   }
 }, 1000);
+
+// ponytail: Heartbeat ping every 25s to keep connections alive through Cloudflare tunnel
+setInterval(() => {
+  for (const client of wssBridge.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.ping();
+    }
+  }
+  for (const client of wssUi.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.ping();
+    }
+  }
+}, 25000);
 
 loadUiStateFromDisk();
 initJobHistoryFromDisk();

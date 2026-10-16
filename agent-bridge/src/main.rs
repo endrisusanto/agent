@@ -523,12 +523,22 @@ async fn run_bridge_worker(state: AppState) {
                     }
                 });
 
-                // 3. Message loop
+                // 3. Message loop with keepalive ping (ponytail: keep Cloudflare tunnel alive)
+                let mut ping_interval = tokio::time::interval(Duration::from_secs(15));
+                ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
                 loop {
                     tokio::select! {
                         _ = state.restart_trigger.notified() => {
                             log_msg(&state, "[Bridge] Reconnect triggered by config update");
                             break;
+                        }
+
+                        _ = ping_interval.tick() => {
+                            if write.send(Message::Ping(Vec::new())).await.is_err() {
+                                log_msg(&state, "[Bridge] Ping failed, remote socket disconnected. Reconnecting...");
+                                break;
+                            }
                         }
 
                         Some(out_msg) = scan_rx.recv() => {
@@ -539,6 +549,10 @@ async fn run_bridge_worker(state: AppState) {
 
                         in_msg = read.next() => {
                             match in_msg {
+                                Some(Ok(Message::Ping(data))) => {
+                                    let _ = write.send(Message::Pong(data)).await;
+                                }
+                                Some(Ok(Message::Pong(_))) => {}
                                 Some(Ok(Message::Text(text))) => {
                                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                                         let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");

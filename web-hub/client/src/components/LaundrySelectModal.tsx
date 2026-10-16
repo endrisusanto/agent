@@ -72,8 +72,21 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
     }
   }, [laundryAnalysis, selectedZipPath]);
 
+  const [parseTimeout, setParseTimeout] = useState<boolean>(false);
+
+  useEffect(() => {
+    setParseTimeout(false);
+    if (!selectedZipPath) return;
+    const timer = window.setTimeout(() => {
+      setParseTimeout(true);
+    }, 15000);
+    return () => window.clearTimeout(timer);
+  }, [selectedZipPath, laundryAnalysis]);
+
   const isParsing = Boolean(
-    selectedZipPath && (!laundryAnalysis || laundryAnalysis.zip_path !== selectedZipPath)
+    selectedZipPath &&
+    (!laundryAnalysis || laundryAnalysis.zip_path !== selectedZipPath) &&
+    !parseTimeout
   );
   const selectedZipFilename = selectedZipPath ? (selectedZipPath.split('/').pop() || selectedZipPath) : '';
 
@@ -456,9 +469,29 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                     </table>
                   </div>
                 </>
-              ) : laundryAnalysis?.error ? (
-                <div className="badge badge-fail" style={{ padding: '0.5rem', width: '100%' }}>
-                  {laundryAnalysis.error}
+              ) : (laundryAnalysis?.error || parseTimeout) ? (
+                <div
+                  className="badge badge-fail"
+                  style={{
+                    padding: '0.75rem',
+                    width: '100%',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <span>
+                    {laundryAnalysis?.error ||
+                      'Parsing timeout: Node Bridge tidak merespons dalam 15 detik. Pastikan gba-agent-bridge aktif.'}
+                  </span>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', flexShrink: 0 }}
+                    onClick={() => handleSelectZip(selectedZipPath)}
+                  >
+                    Coba Lagi
+                  </button>
                 </div>
               ) : !laundryAnalysis || laundryAnalysis.rows.length === 0 ? (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
