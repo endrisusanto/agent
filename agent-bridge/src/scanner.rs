@@ -2,11 +2,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 use crate::types::{BusyRegistry, DeviceInfo, LaundryZipItem};
 
+// ponytail: Cache static device properties so we don't spawn 40+ adb processes every 2.5s
+static PROPS_CACHE: LazyLock<Mutex<HashMap<String, HashMap<String, String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 pub fn scan_all_devices(auto_root: &Path) -> Vec<DeviceInfo> {
-    let output = match Command::new("adb").arg("devices").arg("-l").output() {
+    let output = match Command::new("timeout").args(["3", "adb", "devices", "-l"]).output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => return Vec::new(),
     };
@@ -98,6 +103,13 @@ pub fn scan_all_devices(auto_root: &Path) -> Vec<DeviceInfo> {
             run_id,
             result_dir,
         });
+    }
+
+    // Clean up cache for disconnected devices
+    let current_serials: std::collections::HashSet<String> =
+        devices.iter().map(|d| d.serial.clone()).collect();
+    if let Ok(mut cache) = PROPS_CACHE.lock() {
+        cache.retain(|k, _| current_serials.contains(k));
     }
 
     devices
@@ -258,8 +270,14 @@ pub fn set_device_lamp(serial: &str, brighten: bool) -> Result<(), String> {
 }
 
 pub fn device_props(serial: &str) -> Result<HashMap<String, String>, String> {
-    let output = Command::new("adb")
-        .args(["-s", serial, "shell", "getprop"])
+    if let Ok(cache) = PROPS_CACHE.lock() {
+        if let Some(cached) = cache.get(serial) {
+            return Ok(cached.clone());
+        }
+    }
+
+    let output = Command::new("timeout")
+        .args(["3", "adb", "-s", serial, "shell", "getprop"])
         .output()
         .map_err(|e| e.to_string())?;
 
@@ -270,6 +288,13 @@ pub fn device_props(serial: &str) -> Result<HashMap<String, String>, String> {
             props.insert(k, v);
         }
     }
+
+    if !props.is_empty() {
+        if let Ok(mut cache) = PROPS_CACHE.lock() {
+            cache.insert(serial.to_string(), props.clone());
+        }
+    }
+
     Ok(props)
 }
 
@@ -289,22 +314,11 @@ fn parse_getprop_line(line: &str) -> Option<(String, String)> {
 }
 
 fn device_ip(serial: &str) -> Result<String, String> {
-    let output = Command::new("adb")
-        .args(["-s", serial, "shell", "ip", "route"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines() {
-        if line.contains("src ") {
-            let tokens: Vec<&str> = line.split_whitespace().collect();
-            if let Some(pos) = tokens.iter().position(|&t| t == "src") {
-                if let Some(ip) = tokens.get(pos + 1) {
-                    return Ok(ip.to_string());
-                }
-            }
-        }
+    if !serial.contains(':') && !serial.contains('.') {
+        return Ok("USB".to_string());
     }
-    Ok("USB".to_string())
+    let ip = serial.split(':').next().unwrap_or("USB");
+    Ok(ip.to_string())
 }
 
 pub fn read_busy_registry(root: &Path) -> BusyRegistry {
