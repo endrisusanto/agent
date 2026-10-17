@@ -1661,8 +1661,12 @@ wssUi.on('connection', (ws) => {
 
           const targetNode = candidateNodes[0];
           if (targetNode) {
-            sendToBridge(targetNode, { type: 'CMD_ANALYZE_LAUNDRY', zip_path, targetPcId: pcId });
-            console.log(`[Hub] Dispatched CMD_ANALYZE_LAUNDRY to ${targetNode} for ${zip_path} (for UI target: ${pcId})`);
+            // ponytail: send the bridge its native local path if matched
+            const bridgeObj = bridges.get(targetNode);
+            const matchedZip = bridgeObj?.laundryZips?.find((z) => z.path === zip_path || z.filename === fname);
+            const resolvedPath = matchedZip?.path || zip_path;
+            sendToBridge(targetNode, { type: 'CMD_ANALYZE_LAUNDRY', zip_path: resolvedPath, targetPcId: pcId });
+            console.log(`[Hub] Dispatched CMD_ANALYZE_LAUNDRY to ${targetNode} for ${resolvedPath} (orig: ${zip_path}, for UI target: ${pcId})`);
           } else {
             console.warn(`[Hub] Gagal dispatch CMD_ANALYZE_LAUNDRY: Tidak ada PC Bridge yang online untuk ${zip_path}`);
             broadcastToUi({

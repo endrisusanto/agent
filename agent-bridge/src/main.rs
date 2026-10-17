@@ -442,19 +442,40 @@ async fn run_bridge_worker(state: AppState) {
         let cucian_dir = PathBuf::from(&cucian_dir_str);
         let _ = fs::create_dir_all(&cucian_dir);
 
-        log_msg(&state, format!("[Bridge] Connecting to Hub: {} as PC_ID: {}", hub_url, pc_id));
+        // ponytail: If hub_url is public domain and fails or times out, try local hub ws://127.0.0.1:4010/ws/bridge as fallback
+        let target_urls = if hub_url.contains("agent.endrisusanto.my.id") {
+            vec![hub_url.clone(), "ws://127.0.0.1:4010/ws/bridge".to_string()]
+        } else {
+            vec![hub_url.clone()]
+        };
 
-        match connect_async(&hub_url).await {
-            Ok((ws_stream, _)) => {
-                log_msg(&state, format!("[Bridge] Successfully connected to Hub at {}", hub_url));
-                {
-                    let mut st = state.status.lock().unwrap();
-                    st.is_connected = true;
-                    st.pc_id = pc_id.clone();
-                    st.hub_url = hub_url.clone();
-                    st.auto_root = auto_root_str.clone();
-                    st.cucian_dir = cucian_dir_str.clone();
+        let mut conn_result = None;
+        for url in &target_urls {
+            log_msg(&state, format!("[Bridge] Connecting to Hub: {} as PC_ID: {}", url, pc_id));
+            match tokio::time::timeout(Duration::from_secs(7), connect_async(url)).await {
+                Ok(Ok((ws_stream, _))) => {
+                    log_msg(&state, format!("[Bridge] Successfully connected to Hub at {}", url));
+                    conn_result = Some((ws_stream, url.clone()));
+                    break;
                 }
+                Ok(Err(err)) => {
+                    log_msg(&state, format!("[Bridge] Connection error to {}: {}", url, err));
+                }
+                Err(_) => {
+                    log_msg(&state, format!("[Bridge] Connection to {} timed out after 7s", url));
+                }
+            }
+        }
+
+        if let Some((ws_stream, active_hub_url)) = conn_result {
+            {
+                let mut st = state.status.lock().unwrap();
+                st.is_connected = true;
+                st.pc_id = pc_id.clone();
+                st.hub_url = active_hub_url;
+                st.auto_root = auto_root_str.clone();
+                st.cucian_dir = cucian_dir_str.clone();
+            }
 
                 let (mut write, mut read) = ws_stream.split();
 
@@ -791,16 +812,14 @@ async fn run_bridge_worker(state: AppState) {
                     let mut st = state.status.lock().unwrap();
                     st.is_connected = false;
                 }
-            }
-            Err(err) => {
+            } else {
                 *BROADCAST_WS_TX.lock().unwrap() = None;
                 {
                     let mut st = state.status.lock().unwrap();
                     st.is_connected = false;
                 }
-                log_msg(&state, format!("[Bridge] Connection failed: {}. Retrying in 1 second...", err));
+                log_msg(&state, "[Bridge] All Hub connections failed or timed out. Retrying in 1 second...");
             }
-        }
 
         tokio::select! {
             _ = state.restart_trigger.notified() => {

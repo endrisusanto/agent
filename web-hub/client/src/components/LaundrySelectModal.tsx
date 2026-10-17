@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { CloseIcon, CheckIcon } from './Icons';
 import { LaundryZipItem, LaundryRow, DeviceItem } from '../hooks/useFleetWebSocket';
+import { isSameZip } from '../utils/formatters';
 
 interface LaundrySelectModalProps {
   isOpen: boolean;
@@ -63,7 +64,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   }, [isOpen]);
 
   useEffect(() => {
-    if (laundryAnalysis && laundryAnalysis.rows && laundryAnalysis.zip_path === selectedZipPath) {
+    if (laundryAnalysis && laundryAnalysis.rows && isSameZip(laundryAnalysis.zip_path, selectedZipPath)) {
       // By default select all failed/not-executed modules
       const failed = laundryAnalysis.rows
         .filter((r) => r.failed > 0 || r.status !== 'pass')
@@ -77,17 +78,17 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
   useEffect(() => {
     setParseTimeout(false);
     if (!selectedZipPath) return;
+    // ponytail: skip timeout once analysis for selected zip is loaded
+    if (laundryAnalysis && isSameZip(laundryAnalysis.zip_path, selectedZipPath)) return;
     const timer = window.setTimeout(() => {
       setParseTimeout(true);
     }, 15000);
     return () => window.clearTimeout(timer);
   }, [selectedZipPath, laundryAnalysis]);
 
-  const isParsing = Boolean(
-    selectedZipPath &&
-    (!laundryAnalysis || laundryAnalysis.zip_path !== selectedZipPath) &&
-    !parseTimeout
-  );
+  const hasAnalysis = Boolean(laundryAnalysis && isSameZip(laundryAnalysis.zip_path, selectedZipPath));
+  const hasError = Boolean(hasAnalysis && laundryAnalysis?.error);
+  const isParsing = Boolean(selectedZipPath && !hasAnalysis && !parseTimeout);
   const selectedZipFilename = selectedZipPath ? (selectedZipPath.split('/').pop() || selectedZipPath) : '';
 
   // Check if a model currently has connected devices
@@ -469,7 +470,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                     </table>
                   </div>
                 </>
-              ) : (laundryAnalysis?.error || parseTimeout) ? (
+              ) : (hasError || parseTimeout) ? (
                 <div
                   className="badge badge-fail"
                   style={{
@@ -482,7 +483,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                   }}
                 >
                   <span>
-                    {laundryAnalysis?.error ||
+                    {(hasError && laundryAnalysis?.error) ||
                       'Parsing timeout: Node Bridge tidak merespons dalam 15 detik. Pastikan gba-agent-bridge aktif.'}
                   </span>
                   <button
@@ -493,7 +494,7 @@ export const LaundrySelectModal: React.FC<LaundrySelectModalProps> = ({
                     Coba Lagi
                   </button>
                 </div>
-              ) : !laundryAnalysis || laundryAnalysis.rows.length === 0 ? (
+              ) : !laundryAnalysis || !isSameZip(laundryAnalysis.zip_path, selectedZipPath) || laundryAnalysis.rows.length === 0 ? (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
                   No modules found in this result.
                 </div>

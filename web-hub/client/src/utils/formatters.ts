@@ -53,5 +53,14 @@ export function formatDurationHms(val: number | string | undefined | null): stri
   return str;
 }
 
+// ponytail: Match zips by full path or basename to avoid container vs host path mismatch
+export function isSameZip(p1?: string, p2?: string): boolean {
+  if (!p1 || !p2) return false;
+  if (p1 === p2) return true;
+  const f1 = p1.split('/').pop();
+  const f2 = p2.split('/').pop();
+  return Boolean(f1 && f2 && f1 === f2);
+}
+
 // Alias for backwards compatibility
 export const formatDuration = formatDurationHms;

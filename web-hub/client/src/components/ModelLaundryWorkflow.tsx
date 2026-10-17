@@ -22,7 +22,7 @@ export interface LaundryWorkflowState {
   isResultsExpanded?: boolean;
 }
 
-import { formatDurationHms } from '../utils/formatters';
+import { formatDurationHms, isSameZip } from '../utils/formatters';
 
 export function isModelMatch(m1?: string, m2?: string): boolean {
   if (!m1 || !m2) return false;
@@ -199,7 +199,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   useEffect(() => {
     if (
       laundryAnalysis &&
-      laundryAnalysis.zip_path === workflow.selectedZip &&
+      isSameZip(laundryAnalysis.zip_path, workflow.selectedZip) &&
       Array.isArray(laundryAnalysis.rows) &&
       laundryAnalysis.rows.length > 0
     ) {
@@ -293,7 +293,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
 
   // Determine active analysis rows (uses live laundryAnalysis or fallback to cachedRows)
   const analysisRows: LaundryRow[] = useMemo(() => {
-    if (laundryAnalysis && laundryAnalysis.zip_path === workflow.selectedZip && Array.isArray(laundryAnalysis.rows) && laundryAnalysis.rows.length > 0) {
+    if (laundryAnalysis && isSameZip(laundryAnalysis.zip_path, workflow.selectedZip) && Array.isArray(laundryAnalysis.rows) && laundryAnalysis.rows.length > 0) {
       return laundryAnalysis.rows;
     }
     if (Array.isArray(workflow.cachedRows) && workflow.cachedRows.length > 0) {

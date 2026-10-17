@@ -353,6 +353,7 @@ export function useFleetWebSocket() {
   }, []);
 
   const analyzeLaundry = useCallback((pcId: string, zip_path: string) => {
+    setLaundryAnalysis(null);
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'EXEC_ANALYZE_LAUNDRY', pcId, zip_path }));
     }
