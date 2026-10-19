@@ -939,6 +939,45 @@ function enrichJobSummary(job: ActiveJob): void {
   }
 }
 
+// ponytail: Categorize logs so one suite (e.g. GTS) does not push out logs of a previous suite (e.g. CTS)
+function getLogCategory(line: string): 'cts' | 'gts' | 'sts' | 'summary' | 'other' {
+  if (typeof line !== 'string') return 'other';
+  if (line.startsWith('[CTS]') || line.includes('cts-tf >') || line.includes('cts-console') || line.includes('cts-sku')) return 'cts';
+  if (line.startsWith('[GTS]') || line.includes('gts-tf >') || line.includes('gts-console') || line.includes('gts_main')) return 'gts';
+  if (line.startsWith('[STS]') || line.includes('sts-tf >') || line.includes('sts-console') || line.includes('sts-dynamic-plan')) return 'sts';
+  const lower = line.toLowerCase();
+  if (
+    lower.includes('[ai worker]') ||
+    lower.includes('[runner]') ||
+    lower.includes('[roxml]') ||
+    lower.includes('[prepare]') ||
+    lower.includes('[preflight]') ||
+    lower.includes('[bridge]') ||
+    lower.includes('[hub]')
+  ) {
+    return 'summary';
+  }
+  return 'other';
+}
+
+function appendCategorizedLog(logs: string[], line: string, maxPerCategory = 1500): void {
+  logs.push(line);
+  if (logs.length > 2500) {
+    const cat = getLogCategory(line);
+    let catCount = 0;
+    let firstIdx = -1;
+    for (let i = 0; i < logs.length; i++) {
+      if (getLogCategory(logs[i]) === cat) {
+        catCount++;
+        if (firstIdx === -1) firstIdx = i;
+      }
+    }
+    if (catCount > maxPerCategory && firstIdx !== -1) {
+      logs.splice(firstIdx, 1);
+    }
+  }
+}
+
 function initJobHistoryFromDisk(): void {
   const resultsDir = getResultsDir();
   try {
@@ -1002,7 +1041,12 @@ function initJobHistoryFromDisk(): void {
               const runLogPath = path.join(fullDir, 'run.log');
               if (fs.existsSync(runLogPath)) {
                 const lines = fs.readFileSync(runLogPath, 'utf-8').split('\n').filter(Boolean);
-                return lines.slice(-300);
+                if (lines.length <= 3000) return lines;
+                const summaryLines = lines.filter(l => getLogCategory(l) === 'summary').slice(-500);
+                const ctsLines = lines.filter(l => getLogCategory(l) === 'cts').slice(-1000);
+                const gtsLines = lines.filter(l => getLogCategory(l) === 'gts').slice(-1000);
+                const stsLines = lines.filter(l => getLogCategory(l) === 'sts').slice(-1000);
+                return [...summaryLines, ...ctsLines, ...gtsLines, ...stsLines];
               }
             } catch (_) {}
             return [];
@@ -1406,8 +1450,7 @@ wssBridge.on('connection', (ws, req) => {
           if (run_id && line) {
             const job = activeJobs.get(run_id);
             if (job) {
-              job.recentLogs.push(line);
-              if (job.recentLogs.length > 500) job.recentLogs.shift();
+              appendCategorizedLog(job.recentLogs, line, 1500);
 
               if (line.includes('Result ZIP preserved:') || line.includes('Preserved retry result ZIP:') || line.includes('result ready:') || line.includes('Result zips:')) {
                 const parts = line.split(/Preserved retry result ZIP:|Result ZIP preserved:|result ready:/i);

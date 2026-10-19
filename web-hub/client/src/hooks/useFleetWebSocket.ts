@@ -146,6 +146,45 @@ export interface PreflightReport {
   scanned_at: number;
 }
 
+// ponytail: Categorize logs so one suite (e.g. GTS) does not push out logs of a previous suite (e.g. CTS)
+function getLogCategory(line: string): 'cts' | 'gts' | 'sts' | 'summary' | 'other' {
+  if (typeof line !== 'string') return 'other';
+  if (line.startsWith('[CTS]') || line.includes('cts-tf >') || line.includes('cts-console') || line.includes('cts-sku')) return 'cts';
+  if (line.startsWith('[GTS]') || line.includes('gts-tf >') || line.includes('gts-console') || line.includes('gts_main')) return 'gts';
+  if (line.startsWith('[STS]') || line.includes('sts-tf >') || line.includes('sts-console') || line.includes('sts-dynamic-plan')) return 'sts';
+  const lower = line.toLowerCase();
+  if (
+    lower.includes('[ai worker]') ||
+    lower.includes('[runner]') ||
+    lower.includes('[roxml]') ||
+    lower.includes('[prepare]') ||
+    lower.includes('[preflight]') ||
+    lower.includes('[bridge]') ||
+    lower.includes('[hub]')
+  ) {
+    return 'summary';
+  }
+  return 'other';
+}
+
+function appendCategorizedLog(logs: string[], line: string, maxPerCategory = 2000): void {
+  logs.push(line);
+  if (logs.length > 3000) {
+    const cat = getLogCategory(line);
+    let catCount = 0;
+    let firstIdx = -1;
+    for (let i = 0; i < logs.length; i++) {
+      if (getLogCategory(logs[i]) === cat) {
+        catCount++;
+        if (firstIdx === -1) firstIdx = i;
+      }
+    }
+    if (catCount > maxPerCategory && firstIdx !== -1) {
+      logs.splice(firstIdx, 1);
+    }
+  }
+}
+
 export function useFleetWebSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [bridges, setBridges] = useState<BridgeInfo[]>([]);
@@ -249,8 +288,7 @@ export function useFleetWebSocket() {
             const { run_id, line } = msg;
             if (run_id && line) {
               const existing = logsByRunIdRef.current.get(run_id) || [];
-              existing.push(line);
-              if (existing.length > 2000) existing.shift();
+              appendCategorizedLog(existing, line, 2000);
               logsByRunIdRef.current.set(run_id, existing);
 
               setActiveJobs((prev) =>

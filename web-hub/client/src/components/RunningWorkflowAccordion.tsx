@@ -216,21 +216,25 @@ const SingleWorkflowRunner: React.FC<{
     const currentSuite = (job.suite || '').toUpperCase();
     const isCurrentlyExecuting = isRunning && currentSuite.includes(suiteName);
     const hasConsoleLogs = logs.length > 0;
+    const hasMatchingZip = availableZips.some((z) => z.toUpperCase().startsWith(`${suiteName}_`));
     const isFinishedLog = logs.some(
-      (l) => l.includes('tradefed finished') || l.includes('End of Results') || l.includes('All done') || l.includes('Summary') || l.includes('Saved test result to')
+      (l) => l.includes('tradefed finished') || l.includes('End of Results') || l.includes('All done') || l.includes('Summary') || l.includes('Saved test result to') || l.includes('result ready')
     );
 
     if (isRunning) {
       if (isCurrentlyExecuting) {
         return { text: 'RUNNING', cls: 'badge-running' };
       }
-      if (hasConsoleLogs && isFinishedLog) {
+      if (hasMatchingZip || (hasConsoleLogs && isFinishedLog)) {
+        return { text: 'COMPLETED', cls: 'badge-ready' };
+      }
+      if (hasConsoleLogs) {
         return { text: 'COMPLETED', cls: 'badge-ready' };
       }
       return { text: 'STANDBY', cls: 'badge-busy' };
     }
 
-    if (hasConsoleLogs) {
+    if (hasMatchingZip || hasConsoleLogs) {
       return { text: 'COMPLETED', cls: 'badge-ready' };
     }
 
