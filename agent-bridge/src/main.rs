@@ -544,8 +544,9 @@ async fn run_bridge_worker(state: AppState) {
                     }
                 });
 
-                // 3. Message loop with keepalive ping (ponytail: keep Cloudflare tunnel alive)
-                let mut ping_interval = tokio::time::interval(Duration::from_secs(15));
+                // 3. Message loop with keepalive ping & heartbeat timeout
+                let mut last_activity = std::time::Instant::now();
+                let mut ping_interval = tokio::time::interval(Duration::from_secs(10));
                 ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                 loop {
@@ -556,6 +557,11 @@ async fn run_bridge_worker(state: AppState) {
                         }
 
                         _ = ping_interval.tick() => {
+                            // ponytail: Detect dead/silent half-open connection if Hub hasn't replied in 30s
+                            if last_activity.elapsed() > Duration::from_secs(30) {
+                                log_msg(&state, "[Bridge] Hub heartbeat timeout (no response for 30s). Reconnecting...");
+                                break;
+                            }
                             if write.send(Message::Ping(Vec::new())).await.is_err() {
                                 log_msg(&state, "[Bridge] Ping failed, remote socket disconnected. Reconnecting...");
                                 break;
@@ -570,11 +576,14 @@ async fn run_bridge_worker(state: AppState) {
 
                         in_msg = read.next() => {
                             match in_msg {
-                                Some(Ok(Message::Ping(data))) => {
-                                    let _ = write.send(Message::Pong(data)).await;
-                                }
-                                Some(Ok(Message::Pong(_))) => {}
-                                Some(Ok(Message::Text(text))) => {
+                                Some(Ok(msg)) => {
+                                    last_activity = std::time::Instant::now();
+                                    match msg {
+                                        Message::Ping(data) => {
+                                            let _ = write.send(Message::Pong(data)).await;
+                                        }
+                                        Message::Pong(_) => {}
+                                        Message::Text(text) => {
                                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                                         let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
                                         match msg_type {
@@ -796,15 +805,21 @@ async fn run_bridge_worker(state: AppState) {
                                         }
                                     }
                                 }
-                                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
+                                Message::Close(_) => {
                                     log_msg(&state, "[Bridge] Hub connection closed");
                                     break;
                                 }
                                 _ => {}
                             }
                         }
+                        None | Some(Err(_)) => {
+                            log_msg(&state, "[Bridge] Hub connection closed or read error");
+                            break;
+                        }
                     }
                 }
+            }
+        }
 
                 *BROADCAST_WS_TX.lock().unwrap() = None;
                 scanner_handle.abort();
