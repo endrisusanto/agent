@@ -997,7 +997,16 @@ function initJobHistoryFromDisk(): void {
           } : undefined,
           zip_file: hasZip ? zipFile : `${fullDir}.zip`,
           zip_files: hasZip ? [zipFile] : [`${fullDir}.zip`],
-          recentLogs: []
+          recentLogs: (() => {
+            try {
+              const runLogPath = path.join(fullDir, 'run.log');
+              if (fs.existsSync(runLogPath)) {
+                const lines = fs.readFileSync(runLogPath, 'utf-8').split('\n').filter(Boolean);
+                return lines.slice(-300);
+              }
+            } catch (_) {}
+            return [];
+          })()
         });
       }
     }
@@ -1313,6 +1322,26 @@ wssBridge.on('connection', (ws, req) => {
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
+      if (msg.pcId && !registeredPcId) {
+        registeredPcId = msg.pcId;
+      }
+      // ponytail: Auto-heal bridge registry if socket reconnect blip cleared it
+      if (registeredPcId) {
+        const existing = bridges.get(registeredPcId);
+        if (!existing || existing.ws !== ws) {
+          bridges.set(registeredPcId, {
+            pcId: registeredPcId,
+            os: existing?.os || msg.os || 'linux',
+            ip: clientIp,
+            autoRoot: existing?.autoRoot || msg.autoRoot || '',
+            toolsVersion: existing?.toolsVersion || msg.toolsVersion || {},
+            connectedAt: existing?.connectedAt || Date.now(),
+            ws,
+            laundryZips: existing?.laundryZips || msg.laundryZips || []
+          });
+          broadcastFleetState();
+        }
+      }
       switch (msg.type) {
         case 'REGISTER_NODE': {
           registeredPcId = msg.pcId || `NODE-${Date.now()}`;
@@ -1518,15 +1547,21 @@ wssBridge.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     if (registeredPcId) {
-      console.log(`[Hub] Node disconnected: ${registeredPcId}`);
-      bridges.delete(registeredPcId);
-      // Mark devices offline
-      for (const [serial, dev] of devices.entries()) {
-        if (dev.pcId === registeredPcId) {
-          devices.delete(serial);
+      const current = bridges.get(registeredPcId);
+      // ponytail: Only delete if the closed socket is the current active socket
+      if (current && current.ws === ws) {
+        console.log(`[Hub] Node disconnected: ${registeredPcId}`);
+        bridges.delete(registeredPcId);
+        // Mark devices offline
+        for (const [serial, dev] of devices.entries()) {
+          if (dev.pcId === registeredPcId) {
+            devices.delete(serial);
+          }
         }
+        broadcastFleetState();
+      } else {
+        console.log(`[Hub] Stale socket closed for ${registeredPcId}; current active bridge retained.`);
       }
-      broadcastFleetState();
     }
   });
 });
@@ -1596,6 +1631,23 @@ wssUi.on('connection', (ws) => {
 
             if (sendToBridge(targetPcId, { type: 'CMD_RUN_SUITE', payload })) {
               console.log(`[Hub] Dispatched CMD_RUN_SUITE (${run_id}) to ${targetPcId}`);
+            } else {
+              const errMsg = `[Hub Error] Tidak dapat mengirim perintah ke Bridge Node "${targetPcId}". Node sedang offline atau tidak terhubung.`;
+              console.warn(errMsg);
+              if (job) {
+                job.status = 'Failed';
+                job.recentLogs.push(errMsg);
+                activeJobs.delete(run_id);
+                jobHistory.unshift({ ...job });
+                broadcastFleetState();
+                broadcastToUi({
+                  type: 'LOG_LINE',
+                  run_id,
+                  pcId: targetPcId,
+                  line: errMsg,
+                  timestamp: Date.now()
+                });
+              }
             }
           }
           break;

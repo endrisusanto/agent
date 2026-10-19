@@ -468,6 +468,8 @@ async fn run_bridge_worker(state: AppState) {
         }
 
         if let Some((ws_stream, active_hub_url)) = conn_result {
+            let zips = scanner::scan_laundry_zips(&auto_root, Some(&cucian_dir));
+            let devs = scanner::scan_all_devices(&auto_root);
             {
                 let mut st = state.status.lock().unwrap();
                 st.is_connected = true;
@@ -475,12 +477,14 @@ async fn run_bridge_worker(state: AppState) {
                 st.hub_url = active_hub_url;
                 st.auto_root = auto_root_str.clone();
                 st.cucian_dir = cucian_dir_str.clone();
+                st.device_count = devs.len();
+                st.zip_count = zips.len();
+                st.devices = devs;
             }
 
                 let (mut write, mut read) = ws_stream.split();
 
                 // 1. Send Node Registration & Initial Preflight Report
-                let zips = scanner::scan_laundry_zips(&auto_root, Some(&cucian_dir));
                 let reg_msg = json!({
                     "type": "REGISTER_NODE",
                     "pcId": pc_id,
@@ -506,12 +510,20 @@ async fn run_bridge_worker(state: AppState) {
                 let (scan_tx, mut scan_rx) = mpsc::unbounded_channel::<Message>();
                 *BROADCAST_WS_TX.lock().unwrap() = Some(scan_tx.clone());
                 let scan_tx_loop = scan_tx.clone();
+                let state_scan = state.clone();
 
                 let scanner_handle = tokio::spawn(async move {
                     let mut tick_counter: u32 = 0;
                     loop {
                         let devs = scanner::scan_all_devices(&auto_root_scan);
                         let zips = scanner::scan_laundry_zips(&auto_root_scan, Some(&cucian_dir_scan));
+
+                        // ponytail: Keep GUI live metrics in sync with scanner
+                        if let Ok(mut st) = state_scan.status.lock() {
+                            st.device_count = devs.len();
+                            st.zip_count = zips.len();
+                            st.devices = devs.clone();
+                        }
 
                         let dev_msg = json!({
                             "type": "DEVICE_LIST_UPDATE",
@@ -852,6 +864,21 @@ fn get_bridge_status(state: tauri::State<AppState>) -> BridgeLiveStatus {
     if let Ok(logs) = state.logs.lock() {
         st.recent_logs = logs.iter().cloned().collect();
     }
+    // ponytail: live fallback if status metrics are still zero
+    if st.device_count == 0 && st.zip_count == 0 {
+        let auto_root = PathBuf::from(&st.auto_root);
+        let cucian_dir = PathBuf::from(&st.cucian_dir);
+        let devs = scanner::scan_all_devices(&auto_root);
+        let zips = scanner::scan_laundry_zips(&auto_root, Some(&cucian_dir));
+        st.device_count = devs.len();
+        st.zip_count = zips.len();
+        st.devices = devs;
+        if let Ok(mut guard) = state.status.lock() {
+            guard.device_count = st.device_count;
+            guard.zip_count = st.zip_count;
+            guard.devices = st.devices.clone();
+        }
+    }
     st
 }
 
@@ -965,6 +992,11 @@ fn main() {
 
     let _ = fs::create_dir_all(&initial_config.cucian_dir);
 
+    let init_auto_root = PathBuf::from(&initial_config.auto_root);
+    let init_cucian_dir = PathBuf::from(&initial_config.cucian_dir);
+    let init_devs = scanner::scan_all_devices(&init_auto_root);
+    let init_zips = scanner::scan_laundry_zips(&init_auto_root, Some(&init_cucian_dir));
+
     let app_state = AppState {
         config: Arc::new(Mutex::new(initial_config.clone())),
         status: Arc::new(Mutex::new(BridgeLiveStatus {
@@ -973,9 +1005,9 @@ fn main() {
             auto_root: initial_config.auto_root.clone(),
             cucian_dir: initial_config.cucian_dir.clone(),
             is_connected: false,
-            device_count: 0,
-            devices: Vec::new(),
-            zip_count: 0,
+            device_count: init_devs.len(),
+            devices: init_devs,
+            zip_count: init_zips.len(),
             recent_logs: Vec::new(),
         })),
         logs: Arc::new(Mutex::new(VecDeque::new())),
