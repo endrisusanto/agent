@@ -208,9 +208,19 @@ const SingleWorkflowRunner: React.FC<{
     ? 'badge-busy'
     : 'badge-ready';
 
-  const glowClass = isRunning
-    ? 'glow-outline-running'
-    : 'glow-outline-idle';
+  const getWorkflowGlowClass = (type: string, running: boolean) => {
+    if (!running) return 'glow-outline-idle';
+    const upper = (type || '').toUpperCase();
+    if (upper.includes('SKU')) return 'glow-pulse-sku';
+    if (upper.includes('STS')) return 'glow-pulse-sts';
+    if (upper.includes('CTS')) return 'glow-pulse-cts';
+    if (upper.includes('GTS')) return 'glow-pulse-gts';
+    if (upper.includes('SMR')) return 'glow-pulse-smr';
+    if (upper.includes('LAUNDRY')) return 'glow-pulse-laundry';
+    return 'glow-pulse-sku';
+  };
+
+  const glowClass = getWorkflowGlowClass(job.test_type || job.suite || '', isRunning);
 
   const getSuiteStatus = (suiteName: 'STS' | 'CTS' | 'GTS', logs: string[]) => {
     const currentSuite = (job.suite || '').toUpperCase();
@@ -245,8 +255,70 @@ const SingleWorkflowRunner: React.FC<{
   const ctsStatus = getSuiteStatus('CTS', ctsLogs);
   const gtsStatus = getSuiteStatus('GTS', gtsLogs);
 
+  const getWorkflowAccentStyle = (type: string, running: boolean) => {
+    const upper = (type || '').toUpperCase();
+    if (upper.includes('SKU')) {
+      return {
+        border: '1.5px solid rgba(14, 165, 233, 0.55)',
+        borderLeft: '4.5px solid #0ea5e9',
+        boxShadow: running ? '0 0 16px rgba(14, 165, 233, 0.28)' : '0 2px 8px rgba(14, 165, 233, 0.08)',
+      };
+    }
+    if (upper.includes('STS')) {
+      return {
+        border: '1.5px solid rgba(245, 158, 11, 0.55)',
+        borderLeft: '4.5px solid #f59e0b',
+        boxShadow: running ? '0 0 16px rgba(245, 158, 11, 0.28)' : '0 2px 8px rgba(245, 158, 11, 0.08)',
+      };
+    }
+    if (upper.includes('CTS')) {
+      return {
+        border: '1.5px solid rgba(16, 185, 129, 0.55)',
+        borderLeft: '4.5px solid #10b981',
+        boxShadow: running ? '0 0 16px rgba(16, 185, 129, 0.28)' : '0 2px 8px rgba(16, 185, 129, 0.08)',
+      };
+    }
+    if (upper.includes('GTS')) {
+      return {
+        border: '1.5px solid rgba(168, 85, 247, 0.55)',
+        borderLeft: '4.5px solid #a855f7',
+        boxShadow: running ? '0 0 16px rgba(168, 85, 247, 0.28)' : '0 2px 8px rgba(168, 85, 247, 0.08)',
+      };
+    }
+    if (upper.includes('SMR')) {
+      return {
+        border: '1.5px solid rgba(244, 63, 94, 0.55)',
+        borderLeft: '4.5px solid #f43f5e',
+        boxShadow: running ? '0 0 16px rgba(244, 63, 94, 0.28)' : '0 2px 8px rgba(244, 63, 94, 0.08)',
+      };
+    }
+    if (upper.includes('LAUNDRY')) {
+      return {
+        border: '1.5px solid rgba(99, 102, 241, 0.55)',
+        borderLeft: '4.5px solid #6366f1',
+        boxShadow: running ? '0 0 16px rgba(99, 102, 241, 0.28)' : '0 2px 8px rgba(99, 102, 241, 0.08)',
+      };
+    }
+    return {
+      border: '1.5px solid rgba(14, 165, 233, 0.5)',
+      borderLeft: '4.5px solid #0ea5e9',
+      boxShadow: running ? '0 0 16px rgba(14, 165, 233, 0.25)' : 'none',
+    };
+  };
+
+  const workflowAccent = getWorkflowAccentStyle(job.test_type || job.suite || '', isRunning);
+
   return (
-    <section className={`laundry-table-card ${glowClass}`} style={{ marginBottom: 0, borderRadius: '10px', overflow: 'hidden', transition: 'all 0.25s ease' }}>
+    <section
+      className={`laundry-table-card ${glowClass}`}
+      style={{
+        marginBottom: 0,
+        borderRadius: '10px',
+        overflow: 'hidden',
+        transition: 'all 0.25s ease',
+        ...workflowAccent
+      }}
+    >
       {/* Testrun Child Accordion Header */}
       <div
         className="workflow-run-head"
@@ -376,15 +448,34 @@ const SingleWorkflowRunner: React.FC<{
       {isParentOpen && (
         <div style={{ padding: '0.5rem 0.65rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
           {/* 1. AI Worker & Agentic Flow Summary (Top Section) */}
-          <section className="running-log-card" style={{ marginBottom: 0 }}>
+          <section
+            className={`running-log-card ${isRunning && (job.suite || '').toUpperCase().includes('PREPARE') ? 'glow-pulse-sku' : ''}`}
+            style={{
+              marginBottom: 0,
+              border: '1.5px solid rgba(56, 189, 248, 0.45)',
+              borderLeft: '4.5px solid #38bdf8',
+              borderRadius: '8px',
+              boxShadow: '0 2px 8px rgba(56, 189, 248, 0.08)',
+              transition: 'all 0.25s ease',
+            }}
+          >
             <div
               className="running-log-head"
-              style={{ backgroundColor: 'rgba(56, 139, 253, 0.08)', cursor: 'pointer' }}
+              style={{
+                backgroundColor: 'rgba(56, 189, 248, 0.10)',
+                borderBottom: '1px solid rgba(56, 189, 248, 0.22)',
+                cursor: 'pointer',
+              }}
               onClick={() => setIsAiWorkerOpen(!isAiWorkerOpen)}
             >
               <div className="running-log-head-title">
-                <span>Summary</span>
-                <span className="badge badge-pc badge-count-pill">{aiWorkerLogs.length}</span>
+                <span style={{ color: '#38bdf8', fontWeight: 800 }}>Summary</span>
+                <span
+                  className="badge badge-pc badge-count-pill"
+                  style={{ backgroundColor: 'rgba(56, 189, 248, 0.16)', color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.35)' }}
+                >
+                  {aiWorkerLogs.length}
+                </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
                 <button
@@ -407,15 +498,34 @@ const SingleWorkflowRunner: React.FC<{
           {/* 2. Individual Suite Accordions Grid */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
             {/* Child 1: STS Tradefed Runner */}
-            <section className="running-log-card" style={{ marginBottom: 0 }}>
+            <section
+              className={`running-log-card ${stsStatus?.text === 'RUNNING' ? 'glow-pulse-sts' : ''}`}
+              style={{
+                marginBottom: 0,
+                border: stsStatus?.text === 'RUNNING' ? '1.5px solid rgba(245, 158, 11, 0.75)' : '1.5px solid rgba(245, 158, 11, 0.45)',
+                borderLeft: '4.5px solid #f59e0b',
+                borderRadius: '8px',
+                boxShadow: stsStatus?.text === 'RUNNING' ? '0 0 14px rgba(245, 158, 11, 0.28)' : '0 2px 8px rgba(245, 158, 11, 0.08)',
+                transition: 'all 0.25s ease',
+              }}
+            >
               <div
                 className="running-log-head"
-                style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'pointer' }}
+                style={{
+                  backgroundColor: 'rgba(245, 158, 11, 0.10)',
+                  borderBottom: '1px solid rgba(245, 158, 11, 0.22)',
+                  cursor: 'pointer',
+                }}
                 onClick={() => setIsStsOpen(!isStsOpen)}
               >
                 <div className="running-log-head-title">
-                  <span>STS</span>
-                  <span className="badge badge-unit badge-count-pill">{stsLogs.length}</span>
+                  <span style={{ color: '#f59e0b', fontWeight: 800 }}>STS</span>
+                  <span
+                    className="badge badge-unit badge-count-pill"
+                    style={{ backgroundColor: 'rgba(245, 158, 11, 0.16)', color: '#f59e0b', borderColor: 'rgba(245, 158, 11, 0.35)' }}
+                  >
+                    {stsLogs.length}
+                  </span>
                   {stsStatus && (
                     <span className={`badge ${stsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {stsStatus.text}
@@ -441,15 +551,34 @@ const SingleWorkflowRunner: React.FC<{
             </section>
 
             {/* Child 2: CTS Tradefed Runner */}
-            <section className="running-log-card" style={{ marginBottom: 0 }}>
+            <section
+              className={`running-log-card ${ctsStatus?.text === 'RUNNING' ? 'glow-pulse-cts' : ''}`}
+              style={{
+                marginBottom: 0,
+                border: ctsStatus?.text === 'RUNNING' ? '1.5px solid rgba(16, 185, 129, 0.75)' : '1.5px solid rgba(16, 185, 129, 0.45)',
+                borderLeft: '4.5px solid #10b981',
+                borderRadius: '8px',
+                boxShadow: ctsStatus?.text === 'RUNNING' ? '0 0 14px rgba(16, 185, 129, 0.28)' : '0 2px 8px rgba(16, 185, 129, 0.08)',
+                transition: 'all 0.25s ease',
+              }}
+            >
               <div
                 className="running-log-head"
-                style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'pointer' }}
+                style={{
+                  backgroundColor: 'rgba(16, 185, 129, 0.10)',
+                  borderBottom: '1px solid rgba(16, 185, 129, 0.22)',
+                  cursor: 'pointer',
+                }}
                 onClick={() => setIsCtsOpen(!isCtsOpen)}
               >
                 <div className="running-log-head-title">
-                  <span>CTS</span>
-                  <span className="badge badge-unit badge-count-pill">{ctsLogs.length}</span>
+                  <span style={{ color: '#10b981', fontWeight: 800 }}>CTS</span>
+                  <span
+                    className="badge badge-unit badge-count-pill"
+                    style={{ backgroundColor: 'rgba(16, 185, 129, 0.16)', color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.35)' }}
+                  >
+                    {ctsLogs.length}
+                  </span>
                   {ctsStatus && (
                     <span className={`badge ${ctsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {ctsStatus.text}
@@ -475,15 +604,34 @@ const SingleWorkflowRunner: React.FC<{
             </section>
 
             {/* Child 3: GTS Tradefed Runner */}
-            <section className="running-log-card" style={{ marginBottom: 0 }}>
+            <section
+              className={`running-log-card ${gtsStatus?.text === 'RUNNING' ? 'glow-pulse-gts' : ''}`}
+              style={{
+                marginBottom: 0,
+                border: gtsStatus?.text === 'RUNNING' ? '1.5px solid rgba(168, 85, 247, 0.75)' : '1.5px solid rgba(168, 85, 247, 0.45)',
+                borderLeft: '4.5px solid #a855f7',
+                borderRadius: '8px',
+                boxShadow: gtsStatus?.text === 'RUNNING' ? '0 0 14px rgba(168, 85, 247, 0.28)' : '0 2px 8px rgba(168, 85, 247, 0.08)',
+                transition: 'all 0.25s ease',
+              }}
+            >
               <div
                 className="running-log-head"
-                style={{ backgroundColor: 'var(--bg-subtle)', cursor: 'pointer' }}
+                style={{
+                  backgroundColor: 'rgba(168, 85, 247, 0.10)',
+                  borderBottom: '1px solid rgba(168, 85, 247, 0.22)',
+                  cursor: 'pointer',
+                }}
                 onClick={() => setIsGtsOpen(!isGtsOpen)}
               >
                 <div className="running-log-head-title">
-                  <span>GTS</span>
-                  <span className="badge badge-unit badge-count-pill">{gtsLogs.length}</span>
+                  <span style={{ color: '#a855f7', fontWeight: 800 }}>GTS</span>
+                  <span
+                    className="badge badge-unit badge-count-pill"
+                    style={{ backgroundColor: 'rgba(168, 85, 247, 0.16)', color: '#a855f7', borderColor: 'rgba(168, 85, 247, 0.35)' }}
+                  >
+                    {gtsLogs.length}
+                  </span>
                   {gtsStatus && (
                     <span className={`badge ${gtsStatus.cls} badge-xs`} style={{ fontWeight: 700 }}>
                       {gtsStatus.text}

@@ -683,7 +683,7 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   }, [workflowResults, serverResultZips, workflow.model, latestBatchName]);
 
   return (
-    <div className="accordion-card">
+    <div className={`accordion-card ${isWorkflowRunning ? 'accordion-card-running' : ''}`}>
       {/* Root Accordion Header */}
       <div className="accordion-header" onClick={toggleExpanded}>
         <div className="accordion-header-top">

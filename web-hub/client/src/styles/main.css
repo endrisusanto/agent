@@ -1197,6 +1197,12 @@ body {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
 }
 
+.accordion-card.accordion-card-running {
+  border: 1.5px solid rgba(14, 165, 233, 0.55);
+  border-left: 4.5px solid #0ea5e9;
+  box-shadow: 0 0 16px rgba(14, 165, 233, 0.22);
+}
+
 .accordion-header {
   display: flex;
   flex-direction: column;
@@ -3270,24 +3276,112 @@ button.btn-running:disabled svg {
    Workflow Run Master & Testrun Accordion Glow Outline Effects
    ========================================================================== */
 
-@keyframes pulseGlowBlue {
-  0% {
-    box-shadow: 0 0 0 0 rgba(56, 139, 253, 0.4), 0 0 16px rgba(56, 139, 253, 0.25);
-    border-color: rgba(56, 139, 253, 0.75);
+@keyframes pulseGlowSky {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35), 0 0 14px rgba(14, 165, 233, 0.2);
+    border-color: rgba(14, 165, 233, 0.65);
   }
   50% {
-    box-shadow: 0 0 0 4px rgba(56, 139, 253, 0.15), 0 0 26px rgba(56, 139, 253, 0.5);
-    border-color: #58a6ff;
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(56, 139, 253, 0.4), 0 0 16px rgba(56, 139, 253, 0.25);
-    border-color: rgba(56, 139, 253, 0.75);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18), 0 0 24px rgba(14, 165, 233, 0.45);
+    border-color: #0ea5e9;
   }
 }
 
+@keyframes pulseGlowAmber {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35), 0 0 14px rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18), 0 0 24px rgba(245, 158, 11, 0.45);
+    border-color: #f59e0b;
+  }
+}
+
+@keyframes pulseGlowEmerald {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35), 0 0 14px rgba(16, 185, 129, 0.2);
+    border-color: rgba(16, 185, 129, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18), 0 0 24px rgba(16, 185, 129, 0.45);
+    border-color: #10b981;
+  }
+}
+
+@keyframes pulseGlowPurple {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.35), 0 0 14px rgba(168, 85, 247, 0.2);
+    border-color: rgba(168, 85, 247, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.18), 0 0 24px rgba(168, 85, 247, 0.45);
+    border-color: #a855f7;
+  }
+}
+
+@keyframes pulseGlowRose {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.35), 0 0 14px rgba(244, 63, 94, 0.2);
+    border-color: rgba(244, 63, 94, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18), 0 0 24px rgba(244, 63, 94, 0.45);
+    border-color: #f43f5e;
+  }
+}
+
+@keyframes pulseGlowIndigo {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.35), 0 0 14px rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18), 0 0 24px rgba(99, 102, 241, 0.45);
+    border-color: #6366f1;
+  }
+}
+
+.glow-pulse-sku {
+  animation: pulseGlowSky 2s infinite ease-in-out !important;
+  border: 1.5px solid #0ea5e9 !important;
+  border-left: 4.5px solid #0ea5e9 !important;
+}
+
+.glow-pulse-sts {
+  animation: pulseGlowAmber 2s infinite ease-in-out !important;
+  border: 1.5px solid #f59e0b !important;
+  border-left: 4.5px solid #f59e0b !important;
+}
+
+.glow-pulse-cts {
+  animation: pulseGlowEmerald 2s infinite ease-in-out !important;
+  border: 1.5px solid #10b981 !important;
+  border-left: 4.5px solid #10b981 !important;
+}
+
+.glow-pulse-gts {
+  animation: pulseGlowPurple 2s infinite ease-in-out !important;
+  border: 1.5px solid #a855f7 !important;
+  border-left: 4.5px solid #a855f7 !important;
+}
+
+.glow-pulse-smr {
+  animation: pulseGlowRose 2s infinite ease-in-out !important;
+  border: 1.5px solid #f43f5e !important;
+  border-left: 4.5px solid #f43f5e !important;
+}
+
+.glow-pulse-laundry {
+  animation: pulseGlowIndigo 2s infinite ease-in-out !important;
+  border: 1.5px solid #6366f1 !important;
+  border-left: 4.5px solid #6366f1 !important;
+}
+
 .glow-outline-running {
-  animation: pulseGlowBlue 2.2s infinite ease-in-out;
-  border: 1.5px solid var(--accent-primary) !important;
+  animation: pulseGlowSky 2s infinite ease-in-out;
+  border: 1.5px solid #0ea5e9 !important;
+  border-left: 4.5px solid #0ea5e9 !important;
 }
 
 .glow-outline-finished {
@@ -3303,8 +3397,8 @@ button.btn-running:disabled svg {
 }
 
 .glow-master-parent {
-  border: 1.5px solid rgba(56, 139, 253, 0.6) !important;
-  box-shadow: 0 0 20px rgba(56, 139, 253, 0.22), inset 0 0 14px rgba(56, 139, 253, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
 
 .workflow-master-card {
@@ -3357,7 +3451,7 @@ button.btn-running:disabled svg {
 }
 
 .running-log-card:hover {
-  border-color: var(--border-strong);
+  filter: brightness(1.03);
 }
 
 .running-log-head {
