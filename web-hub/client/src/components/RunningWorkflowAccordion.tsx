@@ -12,13 +12,37 @@ interface RunningWorkflowAccordionProps {
   onDeleteRun?: (run_id: string, pcId?: string) => void;
 }
 
+export interface CardAccent {
+  color: string;
+  borderColor: string;
+  glowClass: string;
+}
+
+export const WORKFLOW_ACCENT_PALETTE: CardAccent[] = [
+  { color: '#0ea5e9', borderColor: 'rgba(14, 165, 233, 0.55)', glowClass: 'glow-pulse-sky' },     // Sky Blue
+  { color: '#f59e0b', borderColor: 'rgba(245, 158, 11, 0.55)', glowClass: 'glow-pulse-amber' },   // Amber
+  { color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.55)', glowClass: 'glow-pulse-emerald' }, // Emerald
+  { color: '#a855f7', borderColor: 'rgba(168, 85, 247, 0.55)', glowClass: 'glow-pulse-purple' },  // Purple
+  { color: '#f43f5e', borderColor: 'rgba(244, 63, 94, 0.55)', glowClass: 'glow-pulse-rose' },     // Rose
+  { color: '#6366f1', borderColor: 'rgba(99, 102, 241, 0.55)', glowClass: 'glow-pulse-indigo' },   // Indigo
+  { color: '#14b8a6', borderColor: 'rgba(20, 184, 166, 0.55)', glowClass: 'glow-pulse-teal' },     // Teal
+  { color: '#d946ef', borderColor: 'rgba(217, 70, 239, 0.55)', glowClass: 'glow-pulse-fuchsia' },  // Fuchsia
+  { color: '#84cc16', borderColor: 'rgba(132, 204, 22, 0.55)', glowClass: 'glow-pulse-lime' },     // Lime
+  { color: '#fb923c', borderColor: 'rgba(251, 146, 60, 0.55)', glowClass: 'glow-pulse-coral' },    // Coral
+];
+
+export const getAccentByIndex = (index: number): CardAccent => {
+  return WORKFLOW_ACCENT_PALETTE[Math.abs(index) % WORKFLOW_ACCENT_PALETTE.length];
+};
+
 const SingleWorkflowRunner: React.FC<{
   job: ActiveJobItem;
+  cardIndex?: number;
   devices?: DeviceItem[];
   cancellingRunIds?: string[];
   onCancelJob: (pcId: string, run_id: string) => void;
   onDeleteRun?: (run_id: string, pcId?: string) => void;
-}> = ({ job, devices, cancellingRunIds = [], onCancelJob, onDeleteRun }) => {
+}> = ({ job, cardIndex = 0, devices, cancellingRunIds = [], onCancelJob, onDeleteRun }) => {
   const isRunning = job.status === 'Running' || job.status === 'Starting';
   const isFinished = job.status === 'Finished' || job.status === 'Test Done';
   const isFailed = job.status === 'Failed';
@@ -208,19 +232,13 @@ const SingleWorkflowRunner: React.FC<{
     ? 'badge-busy'
     : 'badge-ready';
 
-  const getWorkflowGlowClass = (type: string, running: boolean) => {
-    if (!running) return 'glow-outline-idle';
-    const upper = (type || '').toUpperCase();
-    if (upper.includes('SKU')) return 'glow-pulse-sku';
-    if (upper.includes('STS')) return 'glow-pulse-sts';
-    if (upper.includes('CTS')) return 'glow-pulse-cts';
-    if (upper.includes('GTS')) return 'glow-pulse-gts';
-    if (upper.includes('SMR')) return 'glow-pulse-smr';
-    if (upper.includes('LAUNDRY')) return 'glow-pulse-laundry';
-    return 'glow-pulse-sku';
+  const accent = getAccentByIndex(cardIndex);
+  const glowClass = isRunning ? accent.glowClass : 'glow-outline-idle';
+  const workflowAccent = {
+    border: `1.5px solid ${accent.borderColor}`,
+    borderLeft: `4.5px solid ${accent.color}`,
+    boxShadow: isRunning ? `0 0 16px ${accent.borderColor}` : '0 2px 8px rgba(0, 0, 0, 0.15)',
   };
-
-  const glowClass = getWorkflowGlowClass(job.test_type || job.suite || '', isRunning);
 
   const getSuiteStatus = (suiteName: 'STS' | 'CTS' | 'GTS', logs: string[]) => {
     const currentSuite = (job.suite || '').toUpperCase();
@@ -255,59 +273,6 @@ const SingleWorkflowRunner: React.FC<{
   const ctsStatus = getSuiteStatus('CTS', ctsLogs);
   const gtsStatus = getSuiteStatus('GTS', gtsLogs);
 
-  const getWorkflowAccentStyle = (type: string, running: boolean) => {
-    const upper = (type || '').toUpperCase();
-    if (upper.includes('SKU')) {
-      return {
-        border: '1.5px solid rgba(14, 165, 233, 0.55)',
-        borderLeft: '4.5px solid #0ea5e9',
-        boxShadow: running ? '0 0 16px rgba(14, 165, 233, 0.28)' : '0 2px 8px rgba(14, 165, 233, 0.08)',
-      };
-    }
-    if (upper.includes('STS')) {
-      return {
-        border: '1.5px solid rgba(245, 158, 11, 0.55)',
-        borderLeft: '4.5px solid #f59e0b',
-        boxShadow: running ? '0 0 16px rgba(245, 158, 11, 0.28)' : '0 2px 8px rgba(245, 158, 11, 0.08)',
-      };
-    }
-    if (upper.includes('CTS')) {
-      return {
-        border: '1.5px solid rgba(16, 185, 129, 0.55)',
-        borderLeft: '4.5px solid #10b981',
-        boxShadow: running ? '0 0 16px rgba(16, 185, 129, 0.28)' : '0 2px 8px rgba(16, 185, 129, 0.08)',
-      };
-    }
-    if (upper.includes('GTS')) {
-      return {
-        border: '1.5px solid rgba(168, 85, 247, 0.55)',
-        borderLeft: '4.5px solid #a855f7',
-        boxShadow: running ? '0 0 16px rgba(168, 85, 247, 0.28)' : '0 2px 8px rgba(168, 85, 247, 0.08)',
-      };
-    }
-    if (upper.includes('SMR')) {
-      return {
-        border: '1.5px solid rgba(244, 63, 94, 0.55)',
-        borderLeft: '4.5px solid #f43f5e',
-        boxShadow: running ? '0 0 16px rgba(244, 63, 94, 0.28)' : '0 2px 8px rgba(244, 63, 94, 0.08)',
-      };
-    }
-    if (upper.includes('LAUNDRY')) {
-      return {
-        border: '1.5px solid rgba(99, 102, 241, 0.55)',
-        borderLeft: '4.5px solid #6366f1',
-        boxShadow: running ? '0 0 16px rgba(99, 102, 241, 0.28)' : '0 2px 8px rgba(99, 102, 241, 0.08)',
-      };
-    }
-    return {
-      border: '1.5px solid rgba(14, 165, 233, 0.5)',
-      borderLeft: '4.5px solid #0ea5e9',
-      boxShadow: running ? '0 0 16px rgba(14, 165, 233, 0.25)' : 'none',
-    };
-  };
-
-  const workflowAccent = getWorkflowAccentStyle(job.test_type || job.suite || '', isRunning);
-
   return (
     <section
       className={`laundry-table-card ${glowClass}`}
@@ -336,7 +301,7 @@ const SingleWorkflowRunner: React.FC<{
               <span className="workflow-run-chevron" style={{ color: 'var(--text-muted)' }}>
                 {isParentOpen ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
               </span>
-              <strong className="workflow-run-title">
+              <strong className="workflow-run-title" style={{ color: accent.color }}>
                 WORKFLOW: {job.test_type || job.suite || ''}
               </strong>
             </div>
@@ -783,10 +748,11 @@ export const RunningWorkflowAccordion: React.FC<RunningWorkflowAccordionProps> =
       {/* Master Parent Accordion Body (contains individual Testrun Accordions) */}
       {isMasterOpen && (
         <div className="workflow-master-body">
-          {displayRuns.map((job) => (
+          {displayRuns.map((job, index) => (
             <SingleWorkflowRunner
               key={job.run_id}
               job={job}
+              cardIndex={index}
               devices={devices}
               cancellingRunIds={cancellingRunIds}
               onCancelJob={onCancelJob}

@@ -39,10 +39,11 @@ export const LaundryWorkflowSection: React.FC<LaundryWorkflowSectionProps> = ({
 }) => {
   return (
     <section className="workflow-section">
-      {workflows.map((wf) => (
+      {workflows.map((wf, idx) => (
         <ModelLaundryWorkflow
           key={wf.id}
           workflow={wf}
+          workflowIndex={idx}
           allDevices={devices}
           availableZips={availableZips}
           activeJobs={activeJobs}

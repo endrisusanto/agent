@@ -3342,40 +3342,114 @@ button.btn-running:disabled svg {
   }
 }
 
+@keyframes pulseGlowTeal {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.35), 0 0 14px rgba(20, 184, 166, 0.2);
+    border-color: rgba(20, 184, 166, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.18), 0 0 24px rgba(20, 184, 166, 0.45);
+    border-color: #14b8a6;
+  }
+}
+
+@keyframes pulseGlowFuchsia {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(217, 70, 239, 0.35), 0 0 14px rgba(217, 70, 239, 0.2);
+    border-color: rgba(217, 70, 239, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(217, 70, 239, 0.18), 0 0 24px rgba(217, 70, 239, 0.45);
+    border-color: #d946ef;
+  }
+}
+
+@keyframes pulseGlowLime {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(132, 204, 22, 0.35), 0 0 14px rgba(132, 204, 22, 0.2);
+    border-color: rgba(132, 204, 22, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(132, 204, 22, 0.18), 0 0 24px rgba(132, 204, 22, 0.45);
+    border-color: #84cc16;
+  }
+}
+
+@keyframes pulseGlowCoral {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.35), 0 0 14px rgba(251, 146, 60, 0.2);
+    border-color: rgba(251, 146, 60, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.18), 0 0 24px rgba(251, 146, 60, 0.45);
+    border-color: #fb923c;
+  }
+}
+
+.glow-pulse-sky,
 .glow-pulse-sku {
   animation: pulseGlowSky 2s infinite ease-in-out !important;
   border: 1.5px solid #0ea5e9 !important;
   border-left: 4.5px solid #0ea5e9 !important;
 }
 
+.glow-pulse-amber,
 .glow-pulse-sts {
   animation: pulseGlowAmber 2s infinite ease-in-out !important;
   border: 1.5px solid #f59e0b !important;
   border-left: 4.5px solid #f59e0b !important;
 }
 
+.glow-pulse-emerald,
 .glow-pulse-cts {
   animation: pulseGlowEmerald 2s infinite ease-in-out !important;
   border: 1.5px solid #10b981 !important;
   border-left: 4.5px solid #10b981 !important;
 }
 
+.glow-pulse-purple,
 .glow-pulse-gts {
   animation: pulseGlowPurple 2s infinite ease-in-out !important;
   border: 1.5px solid #a855f7 !important;
   border-left: 4.5px solid #a855f7 !important;
 }
 
+.glow-pulse-rose,
 .glow-pulse-smr {
   animation: pulseGlowRose 2s infinite ease-in-out !important;
   border: 1.5px solid #f43f5e !important;
   border-left: 4.5px solid #f43f5e !important;
 }
 
+.glow-pulse-indigo,
 .glow-pulse-laundry {
   animation: pulseGlowIndigo 2s infinite ease-in-out !important;
   border: 1.5px solid #6366f1 !important;
   border-left: 4.5px solid #6366f1 !important;
+}
+
+.glow-pulse-teal {
+  animation: pulseGlowTeal 2s infinite ease-in-out !important;
+  border: 1.5px solid #14b8a6 !important;
+  border-left: 4.5px solid #14b8a6 !important;
+}
+
+.glow-pulse-fuchsia {
+  animation: pulseGlowFuchsia 2s infinite ease-in-out !important;
+  border: 1.5px solid #d946ef !important;
+  border-left: 4.5px solid #d946ef !important;
+}
+
+.glow-pulse-lime {
+  animation: pulseGlowLime 2s infinite ease-in-out !important;
+  border: 1.5px solid #84cc16 !important;
+  border-left: 4.5px solid #84cc16 !important;
+}
+
+.glow-pulse-coral {
+  animation: pulseGlowCoral 2s infinite ease-in-out !important;
+  border: 1.5px solid #fb923c !important;
+  border-left: 4.5px solid #fb923c !important;
 }
 
 .glow-outline-running {

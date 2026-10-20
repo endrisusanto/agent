@@ -23,6 +23,7 @@ export interface LaundryWorkflowState {
 }
 
 import { formatDurationHms, isSameZip } from '../utils/formatters';
+import { getAccentByIndex } from './RunningWorkflowAccordion';
 
 export function isModelMatch(m1?: string, m2?: string): boolean {
   if (!m1 || !m2) return false;
@@ -147,6 +148,7 @@ export function detectZipPlanKind(rows?: LaundryRow[], zipPath?: string, existin
 
 interface ModelLaundryWorkflowProps {
   workflow: LaundryWorkflowState;
+  workflowIndex?: number;
   allDevices: DeviceItem[];
   availableZips: LaundryZipItem[];
   activeJobs?: ActiveJobItem[];
@@ -166,6 +168,7 @@ interface ModelLaundryWorkflowProps {
 
 export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
   workflow,
+  workflowIndex = 0,
   allDevices,
   availableZips,
   activeJobs = [],
@@ -682,8 +685,16 @@ export const ModelLaundryWorkflow: React.FC<ModelLaundryWorkflowProps> = ({
     return list;
   }, [workflowResults, serverResultZips, workflow.model, latestBatchName]);
 
+  const accent = getAccentByIndex(workflowIndex);
+
   return (
-    <div className={`accordion-card ${isWorkflowRunning ? 'accordion-card-running' : ''}`}>
+    <div
+      className={`accordion-card ${isWorkflowRunning ? accent.glowClass : ''}`}
+      style={isWorkflowRunning ? {
+        border: `1.5px solid ${accent.borderColor}`,
+        borderLeft: `4.5px solid ${accent.color}`,
+      } : undefined}
+    >
       {/* Root Accordion Header */}
       <div className="accordion-header" onClick={toggleExpanded}>
         <div className="accordion-header-top">
